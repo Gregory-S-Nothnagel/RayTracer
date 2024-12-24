@@ -553,30 +553,141 @@ void findColor(Material* m1, double* view_dir, double* view_pos, int ray_depth, 
 
 	m2 = adam.getIntersect(m1, &intersection_dist, normal, view_dir, view_pos, data);
 
+	// get intersection point of view ray with object so we can do other calculations using it
+	double intersection_point[3];
+	for (int channel = 0; channel < 3; channel++) {
+		intersection_point[channel] = view_pos[channel] + view_dir[channel] * intersection_dist;
+	}
+
 	// if ray is transmitting through material and hitting a backface, reverse object surface normal
 	if (m1 == m2 && dot3D(view_dir, normal) > 0) {
 		for (int dim = 0; dim < 3; dim++) normal[dim] *= -1;
 	}
 
-	// if ray inside of non-air material AND hitting its own boundary
-	// if ray exiting its own boundary
+	// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
 	if (m1 != adam.M && m1 == m2) {
-		double intersection_point[3];
-		for (int channel = 0; channel < 3; channel++) {
-			intersection_point[channel] = view_pos[channel] + view_dir[channel] * intersection_dist;
-		}
 		m2 = adam.materialAt(intersection_point, m1);
 		if (m2 == nullptr) m2 = adam.M;
 	}
 
+	// DEBUG
 	if (ray_depth == 0 && false) {
 		data[0] = (intersection_dist + 1) / 2 * 255;
 		return;
 	}
 
-	// if intersection point found, "return" that object's color when viewed from view_dir and view_pos
-	if (intersection_dist > 0) {
-		getColor(m1, m2, normal, view_dir, view_pos, intersection_dist, ray_depth, data, factor);
+	// if intersection point not found, return early so that no additional color is added (ie. background color is black)
+	if (intersection_dist <= 0) return;
+
+	// add ambient light (lambertian roughness coefficient)
+	/*
+	for (Object* L : objects) {
+
+		// if L is a light source
+		if (L->M->emissivity > 0 && L != this) {
+
+			// determine if L is unobstructed
+			double intersection_light_vector_normalized[3] = { L->pos[0] - intersection_point[0], L->pos[1] - intersection_point[1], L->pos[2] - intersection_point[2] };
+			double light_intersection_dist = vectorLength3D(intersection_light_vector_normalized);
+			normalize(intersection_light_vector_normalized, 3);
+			double tangentness = dot3D(normal, intersection_light_vector_normalized);
+			bool obstructed_flag = (tangentness < 0);
+
+			for (Object* O : objects) { // O for potential obstructor
+
+				// obstructing object found
+				if (O != this && O != L &&
+					O->getDistance(intersection_light_vector_normalized, intersection_point) < light_intersection_dist &&
+					O->getDistance(intersection_light_vector_normalized, intersection_point) > 0) {
+					obstructed_flag = true;
+				}
+
+			}
+
+			// if L is unobstructed
+			if (!obstructed_flag) {
+
+				// apply reflected ambient light
+				for (int channel = 0; channel < 3; channel++) {
+					// light emissivity * light color * tangentness * (ratio of (surface area of a sphere of radius light_intersection_dist) : (surface area of a sphere of light's radius)
+					// times roughness (reflection is multipled by factor of (1 - roughness))
+					// times factor
+					data[channel] += M->roughness * L->M->emissivity * L->M->diffuse_color[channel] * tangentness * (power(L->light_radius, 2) / power(light_intersection_dist, 2)) * factor;
+				}
+
+			}
+
+		}
+
+	}
+	*/
+
+
+	// add emission light
+	for (int channel = 0; channel < 3; channel++) data[channel] += m2->emissivity * m2->color[channel] * factor;
+
+	// add reflected light
+
+	// first, find reflection dir (using formula from https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel.html)
+	double view_reflect_dir[3];
+	double temp = dot3D(view_dir, normal);
+	for (int dim = 0; dim < 3; dim++) {
+		view_reflect_dir[dim] = view_dir[dim] - 2 * temp * normal[dim];
+	}
+	normalize(view_reflect_dir, 3);
+
+	// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
+	double intersection_eye_vector[3];
+	for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = view_pos[dim] - intersection_point[dim];
+	double theta_1 = getAngleVectors(normal, intersection_eye_vector);
+	double theta_2 = asin(m1->refr_index * sin(theta_1) / m2->refr_index);
+
+	double n1costheta1 = m1->refr_index * cos(theta_1);
+	double n1costheta2 = m1->refr_index * cos(theta_2);
+	double n2costheta1 = m2->refr_index * cos(theta_1);
+	double n2costheta2 = m2->refr_index * cos(theta_2);
+
+	// calculate reflection factor using fresnel equations
+	double rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
+	double rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
+	double reflection_factor = (.5 * rs * rs + .5 * rp * rp);
+
+
+	// next, get a random direction
+	double rand_dir[3];
+	randDirection(rand_dir);
+	if (dot3D(rand_dir, normal) < 0) {
+		for (int dim = 0; dim < 3; dim++) rand_dir[dim] *= -1;
+	}
+
+	// now, onto transmission
+	double c1 = cos(theta_1);
+	double c2 = sqrt(1 - power(m1->refr_index / m2->refr_index, 2) * power(sin(theta_1), 2));
+
+	double view_transmit_dir[3];
+	for (int dim = 0; dim < 3; dim++) {
+		view_transmit_dir[dim] = m1->refr_index * (view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
+	}
+	normalize(view_transmit_dir, 3);
+
+	// apply roughness to transmission and reflection vectors
+	if (m2 == material_list[2]) {
+		for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m1->roughness * rand_dir[dim] + (1 - m1->roughness) * view_reflect_dir[dim];
+		for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m1->roughness * -rand_dir[dim] + (1 - m1->roughness) * view_transmit_dir[dim];
+	}
+	else {
+		for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m2->roughness * rand_dir[dim] + (1 - m2->roughness) * view_reflect_dir[dim];
+		for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m2->roughness * -rand_dir[dim] + (1 - m2->roughness) * view_transmit_dir[dim];
+	}
+	normalize(view_reflect_dir, 3);
+	normalize(view_transmit_dir, 3);
+
+	// apply transmission OR reflection
+	if (sm64.randDouble() < reflection_factor) {
+		findColor(m1, view_reflect_dir, intersection_point, ray_depth - 1, data, factor);
+	}
+	else {
+		findColor(m2, view_transmit_dir, intersection_point, ray_depth - 1, data, factor);
 	}
 
 }
