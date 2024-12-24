@@ -9,6 +9,36 @@
 #include "PRNGs.h"
 #include <sycl/sycl.hpp>
 #include "RayTracerSYCL.h"
+#include <stack>
+#include <utility>
+
+// Separate this into a .h file at some point
+template <typename T, int MAX_SIZE>
+class FixedStack {
+private:
+	T data[MAX_SIZE];
+	int top = -1;
+
+public:
+	void push(T value) {
+		if (top < MAX_SIZE - 1) {
+			top++;
+			data[top] = value;
+		}
+	}
+
+	T pop() {
+		return (top >= 0) ? data[top--] : T(); // Handle underflow as needed
+	}
+
+	bool empty() const {
+		return top == -1;
+	}
+
+	T peek() const {
+		return data[top];
+	}
+};
 
 // Create a queue using a GPU selector
 sycl::queue Q{ sycl::gpu_selector_v };
@@ -128,9 +158,6 @@ Material* material_list[4] = {
 				 1.5), // e_colors, e, d_colors, roughness, refr
 };
 
-
-// declare raytracing function before Sphere class is defined so sphere class can use it
-void findColor(Material* medium_material, double* view_dir, double* view_pos, int ray_depth, double* data, double factor);
 class Object {
 public:
 
@@ -418,281 +445,132 @@ Group adam(
 	2 // material index
 );
 
-// assumes view_dir normalized!
-void getColor(Material* m1, Material* m2, double* normal, double* view_dir, double* view_pos, double distance, int ray_depth, double* data, double factor) {
+void findColor(Material* m1, double* view_dir, double* view_pos, double factor, double* image_data) {
+	
+	double local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
+	double local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
 
-	// get intersection point of view ray with object so we can do other calculations using it
-	double intersection_point[3];
-	for (int channel = 0; channel < 3; channel++) {
-		intersection_point[channel] = view_pos[channel] + view_dir[channel] * distance;
-	}
+	for (int ray_depth = 0; ray_depth <= 2; ray_depth++) {
 
-	// add ambient light (lambertian roughness coefficient)
-	/*
-	for (Object* L : objects) {
+		// initialize values needed for light calculation: m1 and m2, 
+		Material* m2 = nullptr;
+		double intersection_dist = -1;
+		double normal[3] = { 0, 0, 0 }; // normal at intersection
 
-		// if L is a light source
-		if (L->M->emissivity > 0 && L != this) {
+		m2 = adam.getIntersect(m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
 
-			// determine if L is unobstructed
-			double intersection_light_vector_normalized[3] = { L->pos[0] - intersection_point[0], L->pos[1] - intersection_point[1], L->pos[2] - intersection_point[2] };
-			double light_intersection_dist = vectorLength3D(intersection_light_vector_normalized);
-			normalize(intersection_light_vector_normalized, 3);
-			double tangentness = dot3D(normal, intersection_light_vector_normalized);
-			bool obstructed_flag = (tangentness < 0);
-
-			for (Object* O : objects) { // O for potential obstructor
-
-				// obstructing object found
-				if (O != this && O != L &&
-					O->getDistance(intersection_light_vector_normalized, intersection_point) < light_intersection_dist &&
-					O->getDistance(intersection_light_vector_normalized, intersection_point) > 0) {
-					obstructed_flag = true;
-				}
-
-			}
-
-			// if L is unobstructed
-			if (!obstructed_flag) {
-
-				// apply reflected ambient light
-				for (int channel = 0; channel < 3; channel++) {
-					// light emissivity * light color * tangentness * (ratio of (surface area of a sphere of radius light_intersection_dist) : (surface area of a sphere of light's radius)
-					// times roughness (reflection is multipled by factor of (1 - roughness))
-					// times factor
-					data[channel] += M->roughness * L->M->emissivity * L->M->diffuse_color[channel] * tangentness * (power(L->light_radius, 2) / power(light_intersection_dist, 2)) * factor;
-				}
-
-			}
-
+		// get intersection point of view ray with object so we can do other calculations using it
+		double intersection_point[3];
+		for (int channel = 0; channel < 3; channel++) {
+			intersection_point[channel] = local_view_pos[channel] + local_view_dir[channel] * intersection_dist;
 		}
 
-	}
-	*/
+		// if ray is transmitting through material and hitting a backface, reverse object surface normal
+		if (m1 == m2 && dot3D(local_view_dir, normal) > 0) {
+			for (int dim = 0; dim < 3; dim++) normal[dim] *= -1;
+		}
+
+		// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
+		if (m1 != adam.M && m1 == m2) {
+			m2 = adam.materialAt(intersection_point, m1);
+			if (m2 == nullptr) m2 = adam.M;
+		}
+
+		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
+		if (intersection_dist <= 0) return;
+
+		// add emission light
+		for (int channel = 0; channel < 3; channel++) image_data[channel] += m2->emissivity * m2->color[channel] * factor;
+
+		// add reflected light
+
+		// first, find reflection dir (using formula from https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel.html)
+		double view_reflect_dir[3];
+		double temp = dot3D(local_view_dir, normal);
+		for (int dim = 0; dim < 3; dim++) {
+			view_reflect_dir[dim] = local_view_dir[dim] - 2 * temp * normal[dim];
+		}
+		normalize(view_reflect_dir, 3);
+
+		// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
+		double intersection_eye_vector[3];
+		for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = local_view_pos[dim] - intersection_point[dim];
+		double theta_1 = getAngleVectors(normal, intersection_eye_vector);
+		double theta_2 = asin(m1->refr_index * sin(theta_1) / m2->refr_index);
+
+		double n1costheta1 = m1->refr_index * cos(theta_1);
+		double n1costheta2 = m1->refr_index * cos(theta_2);
+		double n2costheta1 = m2->refr_index * cos(theta_1);
+		double n2costheta2 = m2->refr_index * cos(theta_2);
+
+		// calculate reflection factor using fresnel equations
+		double rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
+		double rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
+		double reflection_factor = (.5 * rs * rs + .5 * rp * rp);
 
 
-	// add emission light
-	for (int channel = 0; channel < 3; channel++) data[channel] += m2->emissivity * m2->color[channel] * factor;
+		// next, get a random direction
+		double rand_dir[3];
+		randDirection(rand_dir);
+		if (dot3D(rand_dir, normal) < 0) {
+			for (int dim = 0; dim < 3; dim++) rand_dir[dim] *= -1;
+		}
 
-	// add reflected light
+		// now, onto transmission
+		double c1 = cos(theta_1);
+		double c2 = sqrt(1 - power(m1->refr_index / m2->refr_index, 2) * power(sin(theta_1), 2));
 
-	// first, find reflection dir (using formula from https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel.html)
-	double view_reflect_dir[3];
-	double temp = dot3D(view_dir, normal);
-	for (int dim = 0; dim < 3; dim++) {
-		view_reflect_dir[dim] = view_dir[dim] - 2 * temp * normal[dim];
-	}
-	normalize(view_reflect_dir, 3);
+		double view_transmit_dir[3];
+		for (int dim = 0; dim < 3; dim++) {
+			view_transmit_dir[dim] = m1->refr_index * (local_view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
+		}
+		normalize(view_transmit_dir, 3);
 
-	// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
-	double intersection_eye_vector[3];
-	for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = view_pos[dim] - intersection_point[dim];
-	double theta_1 = getAngleVectors(normal, intersection_eye_vector);
-	double theta_2 = asin(m1->refr_index * sin(theta_1) / m2->refr_index);
+		// apply roughness to transmission and reflection vectors
+		if (m2 == material_list[2]) {
+			for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m1->roughness * rand_dir[dim] + (1 - m1->roughness) * view_reflect_dir[dim];
+			for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m1->roughness * -rand_dir[dim] + (1 - m1->roughness) * view_transmit_dir[dim];
+		}
+		else {
+			for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m2->roughness * rand_dir[dim] + (1 - m2->roughness) * view_reflect_dir[dim];
+			for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m2->roughness * -rand_dir[dim] + (1 - m2->roughness) * view_transmit_dir[dim];
+		}
+		normalize(view_reflect_dir, 3);
+		normalize(view_transmit_dir, 3);
 
-	double n1costheta1 = m1->refr_index * cos(theta_1);
-	double n1costheta2 = m1->refr_index * cos(theta_2);
-	double n2costheta1 = m2->refr_index * cos(theta_1);
-	double n2costheta2 = m2->refr_index * cos(theta_2);
+		// DEBUG
+		if (ray_depth == 1 && false) {
+			image_data[0] = (view_transmit_dir[0] + 1) / 2 * 255;
+			image_data[1] = (view_transmit_dir[1] + 1) / 2 * 255;
+			image_data[2] = (view_transmit_dir[2] + 1) / 2 * 255;
+			return;
+		}
 
-	// calculate reflection factor using fresnel equations
-	double rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
-	double rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
-	double reflection_factor = (.5 * rs * rs + .5 * rp * rp);
+		// apply transmission OR reflection
+		if (sm64.randDouble() < reflection_factor) {
+			m1 = m1;
+			for (int dim = 0; dim < 3; dim++) {
+				local_view_dir[dim] = view_reflect_dir[dim];
+				local_view_pos[dim] = intersection_point[dim];
+			}
+			factor = factor;
+		}
+		else {
+			m1 = m2;
+			for (int dim = 0; dim < 3; dim++) {
+				local_view_dir[dim] = view_transmit_dir[dim];
+				local_view_pos[dim] = intersection_point[dim];
+			}
+			factor = factor;
+		}
 
-
-	// next, get a random direction
-	double rand_dir[3];
-	randDirection(rand_dir);
-	if (dot3D(rand_dir, normal) < 0) {
-		for (int dim = 0; dim < 3; dim++) rand_dir[dim] *= -1;
-	}
-
-	// now, onto transmission
-	double c1 = cos(theta_1);
-	double c2 = sqrt(1 - power(m1->refr_index / m2->refr_index, 2) * power(sin(theta_1), 2));
-
-	double view_transmit_dir[3];
-	for (int dim = 0; dim < 3; dim++) {
-		view_transmit_dir[dim] = m1->refr_index * (view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
-	}
-	normalize(view_transmit_dir, 3);
-
-	// apply roughness to transmission and reflection vectors
-	if (m2 == material_list[2]) {
-		for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m1->roughness * rand_dir[dim] + (1 - m1->roughness) * view_reflect_dir[dim];
-		for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m1->roughness * -rand_dir[dim] + (1 - m1->roughness) * view_transmit_dir[dim];
-	}
-	else {
-		for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m2->roughness * rand_dir[dim] + (1 - m2->roughness) * view_reflect_dir[dim];
-		for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m2->roughness * -rand_dir[dim] + (1 - m2->roughness) * view_transmit_dir[dim];
-	}
-	normalize(view_reflect_dir, 3);
-	normalize(view_transmit_dir, 3);
-
-	// apply transmission OR reflection
-	if (sm64.randDouble() < reflection_factor) {
-		findColor(m1, view_reflect_dir, intersection_point, ray_depth - 1, data, factor);
-	}
-	else {
-		findColor(m2, view_transmit_dir, intersection_point, ray_depth - 1, data, factor);
 	}
 
 }
 
+//#define GPU_ENABLE
 
-// ray_depth is decremented(ONLY when findColor() called!)
-void findColor(Material* m1, double* view_dir, double* view_pos, int ray_depth, double* data, double factor) {
-
-	if (ray_depth < 0) return;
-
-	// initialize values needed for light calculation: m1 and m2, 
-	Material* m2 = nullptr;
-	double intersection_dist = -1;
-	double normal[3] = { 0, 0, 0 }; // normal at intersection
-
-	m2 = adam.getIntersect(m1, &intersection_dist, normal, view_dir, view_pos, data);
-
-	// get intersection point of view ray with object so we can do other calculations using it
-	double intersection_point[3];
-	for (int channel = 0; channel < 3; channel++) {
-		intersection_point[channel] = view_pos[channel] + view_dir[channel] * intersection_dist;
-	}
-
-	// if ray is transmitting through material and hitting a backface, reverse object surface normal
-	if (m1 == m2 && dot3D(view_dir, normal) > 0) {
-		for (int dim = 0; dim < 3; dim++) normal[dim] *= -1;
-	}
-
-	// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
-	if (m1 != adam.M && m1 == m2) {
-		m2 = adam.materialAt(intersection_point, m1);
-		if (m2 == nullptr) m2 = adam.M;
-	}
-
-	// DEBUG
-	if (ray_depth == 0 && false) {
-		data[0] = (intersection_dist + 1) / 2 * 255;
-		return;
-	}
-
-	// if intersection point not found, return early so that no additional color is added (ie. background color is black)
-	if (intersection_dist <= 0) return;
-
-	// add ambient light (lambertian roughness coefficient)
-	/*
-	for (Object* L : objects) {
-
-		// if L is a light source
-		if (L->M->emissivity > 0 && L != this) {
-
-			// determine if L is unobstructed
-			double intersection_light_vector_normalized[3] = { L->pos[0] - intersection_point[0], L->pos[1] - intersection_point[1], L->pos[2] - intersection_point[2] };
-			double light_intersection_dist = vectorLength3D(intersection_light_vector_normalized);
-			normalize(intersection_light_vector_normalized, 3);
-			double tangentness = dot3D(normal, intersection_light_vector_normalized);
-			bool obstructed_flag = (tangentness < 0);
-
-			for (Object* O : objects) { // O for potential obstructor
-
-				// obstructing object found
-				if (O != this && O != L &&
-					O->getDistance(intersection_light_vector_normalized, intersection_point) < light_intersection_dist &&
-					O->getDistance(intersection_light_vector_normalized, intersection_point) > 0) {
-					obstructed_flag = true;
-				}
-
-			}
-
-			// if L is unobstructed
-			if (!obstructed_flag) {
-
-				// apply reflected ambient light
-				for (int channel = 0; channel < 3; channel++) {
-					// light emissivity * light color * tangentness * (ratio of (surface area of a sphere of radius light_intersection_dist) : (surface area of a sphere of light's radius)
-					// times roughness (reflection is multipled by factor of (1 - roughness))
-					// times factor
-					data[channel] += M->roughness * L->M->emissivity * L->M->diffuse_color[channel] * tangentness * (power(L->light_radius, 2) / power(light_intersection_dist, 2)) * factor;
-				}
-
-			}
-
-		}
-
-	}
-	*/
-
-
-	// add emission light
-	for (int channel = 0; channel < 3; channel++) data[channel] += m2->emissivity * m2->color[channel] * factor;
-
-	// add reflected light
-
-	// first, find reflection dir (using formula from https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel.html)
-	double view_reflect_dir[3];
-	double temp = dot3D(view_dir, normal);
-	for (int dim = 0; dim < 3; dim++) {
-		view_reflect_dir[dim] = view_dir[dim] - 2 * temp * normal[dim];
-	}
-	normalize(view_reflect_dir, 3);
-
-	// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
-	double intersection_eye_vector[3];
-	for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = view_pos[dim] - intersection_point[dim];
-	double theta_1 = getAngleVectors(normal, intersection_eye_vector);
-	double theta_2 = asin(m1->refr_index * sin(theta_1) / m2->refr_index);
-
-	double n1costheta1 = m1->refr_index * cos(theta_1);
-	double n1costheta2 = m1->refr_index * cos(theta_2);
-	double n2costheta1 = m2->refr_index * cos(theta_1);
-	double n2costheta2 = m2->refr_index * cos(theta_2);
-
-	// calculate reflection factor using fresnel equations
-	double rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
-	double rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
-	double reflection_factor = (.5 * rs * rs + .5 * rp * rp);
-
-
-	// next, get a random direction
-	double rand_dir[3];
-	randDirection(rand_dir);
-	if (dot3D(rand_dir, normal) < 0) {
-		for (int dim = 0; dim < 3; dim++) rand_dir[dim] *= -1;
-	}
-
-	// now, onto transmission
-	double c1 = cos(theta_1);
-	double c2 = sqrt(1 - power(m1->refr_index / m2->refr_index, 2) * power(sin(theta_1), 2));
-
-	double view_transmit_dir[3];
-	for (int dim = 0; dim < 3; dim++) {
-		view_transmit_dir[dim] = m1->refr_index * (view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
-	}
-	normalize(view_transmit_dir, 3);
-
-	// apply roughness to transmission and reflection vectors
-	if (m2 == material_list[2]) {
-		for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m1->roughness * rand_dir[dim] + (1 - m1->roughness) * view_reflect_dir[dim];
-		for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m1->roughness * -rand_dir[dim] + (1 - m1->roughness) * view_transmit_dir[dim];
-	}
-	else {
-		for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m2->roughness * rand_dir[dim] + (1 - m2->roughness) * view_reflect_dir[dim];
-		for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m2->roughness * -rand_dir[dim] + (1 - m2->roughness) * view_transmit_dir[dim];
-	}
-	normalize(view_reflect_dir, 3);
-	normalize(view_transmit_dir, 3);
-
-	// apply transmission OR reflection
-	if (sm64.randDouble() < reflection_factor) {
-		findColor(m1, view_reflect_dir, intersection_point, ray_depth - 1, data, factor);
-	}
-	else {
-		findColor(m2, view_transmit_dir, intersection_point, ray_depth - 1, data, factor);
-	}
-
-}
-
-/*
+#ifdef GPU_ENABLE
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos) {
     sycl::queue q;
     sycl::buffer<unsigned char, 1> imageBuffer((unsigned char*)image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
@@ -714,7 +592,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 			// call raytracing function to get this fragment's color
 			double frag_color[3] = { 0, 0, 0 };
 
-			findColor((adam.M), frag_dir, eye_pos, 2, frag_color, 1);
+			findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color);
 			for (int channel = 0; channel < 3; channel++) {
 				image_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 				image_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
@@ -724,8 +602,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
             });
         }).wait();
 }
-*/
-
+#else
 void funcNoGPU(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos) {
 	
 	// for each fragment (each pixel on screen)...
@@ -740,7 +617,7 @@ void funcNoGPU(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_d
 
 		// call raytracing function to get this fragment's color
 		double frag_color[3] = { 0, 0, 0 };
-		findColor((adam.M), frag_dir, eye_pos, 2, frag_color, 1);
+		findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color);
 		for (int channel = 0; channel < 3; channel++) {
 			image_data_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 			image_data_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
@@ -749,3 +626,4 @@ void funcNoGPU(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_d
 	}
 
 }
+#endif
