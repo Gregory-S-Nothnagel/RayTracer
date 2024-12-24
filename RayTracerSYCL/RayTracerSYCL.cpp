@@ -43,7 +43,6 @@ public:
 // Create a queue using a GPU selector
 sycl::queue Q{ sycl::gpu_selector_v };
 
-SplitMix64 sm64(10);
 bool DEBUG = false;
 
 // faster pow() function for when using positive integer powers
@@ -105,12 +104,12 @@ double getAngleVectors(const double* BA, const double* BC) { // B is crux of ang
 	return acos(dot3D(BA, BC) / (vectorLength3D(BA) * vectorLength3D(BC)));
 }
 
-void randDirection(double* dir) {
+void randDirection(double* dir, uint64_t* rand_seed) {
 
 	// from here: https://stackoverflow.com/questions/5408276/sampling-uniformly-distributed-random-points-inside-a-spherical-volume
 
-	double phi = sm64.randDouble() * M_PI * 2;
-	double costheta = sm64.randDouble() * 2 - 1;
+	double phi = randDouble(rand_seed) * M_PI * 2;
+	double costheta = randDouble(rand_seed) * 2 - 1;
 
 	double theta = acos(costheta);
 	dir[0] = sin(theta) * cos(phi);
@@ -143,7 +142,7 @@ public:
 		this->roughness = roughness;
 	}
 };
-Material* material_list[4] = {
+Material* const material_list[4] = {
 	new Material(255, 255, 255, 1.0, // light
 				 255, 255, 255, 1,
 				 1.5), // e_colors, e, d_colors, roughness, refr
@@ -329,12 +328,14 @@ public:
 };
 class Group : public Object {
 public:
-	double radius; // must be same location as Sphere
-	Object** objects; // first object is always the one whose volume remains in even of overlap
-	int num_objects;
+	double radius = 0; // must be same location as Sphere
+	Object** objects = nullptr; // first object is always the one whose volume remains in even of overlap
+	int num_objects = 0;
 	bool Union = false;
 	bool Intersection = false;
 	bool Difference = false; // I, U, D for intersection, union, difference
+
+	Group() {}
 
 	Group(Object** objects, int num_objects, int combine_method, double group_radius, double pos_x, double pos_y, double pos_z, int material_index) : objects(objects), num_objects(num_objects) { // 0 for Union, 1 for intersection, 2 for Difference
 		Union = (combine_method == 0);
@@ -357,7 +358,7 @@ public:
 	}
 
 	// given view dir and pos, find m2, intersection_dist, normal. m2 is returned, the rest are passed by ref
-	Material* getIntersect(Material* m1, double* intersection_dist, double* normal, double* view_dir, double* view_pos, double* data) {
+	Material* getIntersect(Material* m1, double* intersection_dist, double* normal, double* view_dir, double* view_pos, double* data) const {
 
 		// get info for each group and shape object
 		Material* closest_object_material = nullptr;
@@ -402,29 +403,6 @@ public:
 
 	}
 
-	Material* materialAt(double* point, Material* blacklisted) {
-
-		Material* mat = nullptr;
-		for (int child_idx = 0; child_idx < num_objects; child_idx++) {
-
-			if (objects[child_idx]->M != blacklisted && objects[child_idx]->inside(point)) {
-
-				if (objects[child_idx]->obj_type == 'G') {
-					mat = ((Group*)objects[child_idx])->materialAt(point, blacklisted);
-					if (mat != nullptr) return mat;
-				}
-				else {
-					return objects[child_idx]->M;
-				}
-
-			}
-
-		}
-
-		return mat;
-
-	}
-
 	bool inside(double* point) const {
 		return power(point[0] - pos[0], 2) + power(point[1] - pos[1], 2) + power(point[2] - pos[2], 2) < radius * radius;
 	}
@@ -445,7 +423,30 @@ Group adam(
 	2 // material index
 );
 
-void findColor(Material* m1, double* view_dir, double* view_pos, double factor, double* image_data) {
+Material* materialAt(Object* cur_obj, double* point, Material* blacklisted) {
+
+	Group* cur_obj_as_group = (Group*)cur_obj;
+
+	while (cur_obj->obj_type == 'G') {
+
+		for (int child_idx = 0; child_idx < cur_obj_as_group->num_objects; child_idx++) {
+
+			if (cur_obj_as_group->objects[child_idx]->M != blacklisted && cur_obj_as_group->objects[child_idx]->inside(point)) {
+				cur_obj = cur_obj_as_group->objects[child_idx];
+				cur_obj_as_group = (Group*)cur_obj;
+			}
+
+		}
+
+		break;
+
+	}
+
+	return cur_obj->M;
+
+}
+
+void findColor(Material* m1, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
 	
 	double local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	double local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
@@ -472,7 +473,7 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 
 		// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
 		if (m1 != adam.M && m1 == m2) {
-			m2 = adam.materialAt(intersection_point, m1);
+			m2 = materialAt((Object*) & adam, intersection_point, m1);
 			if (m2 == nullptr) m2 = adam.M;
 		}
 
@@ -511,7 +512,7 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 
 		// next, get a random direction
 		double rand_dir[3];
-		randDirection(rand_dir);
+		randDirection(rand_dir, rand_seed);
 		if (dot3D(rand_dir, normal) < 0) {
 			for (int dim = 0; dim < 3; dim++) rand_dir[dim] *= -1;
 		}
@@ -547,13 +548,13 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 		}
 
 		// apply transmission OR reflection
-		if (sm64.randDouble() < reflection_factor) {
-			m1 = m1;
+
+		// remember to specify all variables used as input to findColor() function. define m1 and factor if they change! (factor should change!!!)
+		if (randDouble(rand_seed) < reflection_factor) {
 			for (int dim = 0; dim < 3; dim++) {
 				local_view_dir[dim] = view_reflect_dir[dim];
 				local_view_pos[dim] = intersection_point[dim];
 			}
-			factor = factor;
 		}
 		else {
 			m1 = m2;
@@ -561,7 +562,6 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 				local_view_dir[dim] = view_transmit_dir[dim];
 				local_view_pos[dim] = intersection_point[dim];
 			}
-			factor = factor;
 		}
 
 	}
@@ -571,7 +571,7 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 //#define GPU_ENABLE
 
 #ifdef GPU_ENABLE
-void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos) {
+void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos, uint64_t* rand_seeds) {
     sycl::queue q;
     sycl::buffer<unsigned char, 1> imageBuffer((unsigned char*)image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
 	sycl::buffer<double, 1> imageBuffer_double((double*)image_data_double, sycl::range<1>(WIDTH * HEIGHT * 3));
@@ -592,7 +592,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 			// call raytracing function to get this fragment's color
 			double frag_color[3] = { 0, 0, 0 };
 
-			findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color);
+			findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[idx]));
 			for (int channel = 0; channel < 3; channel++) {
 				image_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 				image_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
@@ -603,7 +603,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
         }).wait();
 }
 #else
-void funcNoGPU(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos) {
+void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos, uint64_t* rand_seeds) {
 	
 	// for each fragment (each pixel on screen)...
 	for (int pixel_index = 0; pixel_index < WIDTH * HEIGHT; pixel_index++) {
@@ -617,7 +617,7 @@ void funcNoGPU(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_d
 
 		// call raytracing function to get this fragment's color
 		double frag_color[3] = { 0, 0, 0 };
-		findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color);
+		findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[pixel_index]));
 		for (int channel = 0; channel < 3; channel++) {
 			image_data_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 			image_data_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
@@ -627,3 +627,4 @@ void funcNoGPU(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_d
 
 }
 #endif
+

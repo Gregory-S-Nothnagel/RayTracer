@@ -16,6 +16,7 @@ double eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction i
 const int WIDTH = 256, HEIGHT = 256;
 unsigned char image_data[WIDTH * HEIGHT * 3];
 double image_data_double[WIDTH * HEIGHT * 3];
+uint64_t rand_seeds[WIDTH * HEIGHT]; // initialized in WinMain
 
 // Global Functions
 
@@ -131,7 +132,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 		}
 
-		funcNoGPU(WIDTH, HEIGHT, image_data, image_data_double, frames_still, eye_rotation, eye_pos);
+		func(WIDTH, HEIGHT, image_data, image_data_double, frames_still, eye_rotation, eye_pos, rand_seeds);
 
 		frames_still++;
 
@@ -153,6 +154,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 // The entry point for a Windows application. This is where the program starts.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+
+	// initializing rand_seeds for all pixels
+	for (int i = 0; i < WIDTH * HEIGHT; i++) rand_seeds[i] = i;
 
 	// Define the properties of the window class.
 	WNDCLASS wc = { 0 };                   // Zero-initialize the WNDCLASS structure.
