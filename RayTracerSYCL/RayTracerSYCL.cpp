@@ -12,34 +12,6 @@
 #include <stack>
 #include <utility>
 
-// Separate this into a .h file at some point
-template <typename T, int MAX_SIZE>
-class FixedStack {
-private:
-	T data[MAX_SIZE];
-	int top = -1;
-
-public:
-	void push(T value) {
-		if (top < MAX_SIZE - 1) {
-			top++;
-			data[top] = value;
-		}
-	}
-
-	T pop() {
-		return (top >= 0) ? data[top--] : T(); // Handle underflow as needed
-	}
-
-	bool empty() const {
-		return top == -1;
-	}
-
-	T peek() const {
-		return data[top];
-	}
-};
-
 // Create a queue using a GPU selector
 sycl::queue Q{ sycl::gpu_selector_v };
 
@@ -124,38 +96,35 @@ std::ofstream debug_file("debug_output.txt");
 // create materials
 class Material {
 public:
-	double color[3]; // only used when sphere is emissive
+	double color[3];        // Only used when sphere is emissive
 	double diffuse_color[3];
 	double emissivity;
 	double refr_index;
 	double roughness;
 
-	Material(double color_r, double color_g, double color_b, double emissivity, double diffuse_color_r, double diffuse_color_g, double diffuse_color_b, double roughness, double refr_index) {
-		color[0] = color_r;
-		color[1] = color_g;
-		color[2] = color_b;
-		diffuse_color[0] = diffuse_color_r;
-		diffuse_color[1] = diffuse_color_g;
-		diffuse_color[2] = diffuse_color_b;
-		this->refr_index = refr_index;
-		this->emissivity = emissivity;
-		this->roughness = roughness;
-	}
+	// Make the constructor constexpr for compile-time evaluation
+	constexpr Material(double color_r, double color_g, double color_b, double emissivity,
+		double diffuse_color_r, double diffuse_color_g, double diffuse_color_b,
+		double roughness, double refr_index)
+		: color{ color_r, color_g, color_b },
+		diffuse_color{ diffuse_color_r, diffuse_color_g, diffuse_color_b },
+		emissivity(emissivity),
+		refr_index(refr_index),
+		roughness(roughness) {}
 };
-Material* const material_list[4] = {
-	new Material(255, 255, 255, 1.0, // light
-				 255, 255, 255, 1,
-				 1.5), // e_colors, e, d_colors, roughness, refr
-	new Material(255, 255, 255, 0.0, // wall
-				 255,   0, 255, 0,
-				 1.33),
-	new Material(255, 255, 255, 0.0, // air
-				 255,   0, 255, .5,
-				 1),
-	new Material(0, 255, 255, 1.0, // light
-				 255, 255, 255, 1,
-				 1.5), // e_colors, e, d_colors, roughness, refr
-};
+
+constexpr Material light(255, 255, 255, 1.0, // light
+	255, 255, 255, 1.0,
+	1.5);
+constexpr Material wall(255, 255, 255, 0.0, // wall
+	255, 0, 255, 0.0,
+	1.33);
+constexpr Material air(255, 255, 255, 0.0, // air
+	255, 0, 255, 0.5,
+	1.0);
+constexpr Material light2(0, 255, 255, 1.0, // light2
+	255, 255, 255, 1.0,
+	1.5);
 
 class Object {
 public:
@@ -182,13 +151,13 @@ public:
 
 	double radius;
 
-	Sphere(double light_radius, double pos_x, double pos_y, double pos_z, double radius, int material_index) {
+	Sphere(double light_radius, double pos_x, double pos_y, double pos_z, double radius, const Material* M) {
 		this->light_radius = light_radius;
 		this->radius = radius;
 		pos[0] = pos_x;
 		pos[1] = pos_y;
 		pos[2] = pos_z;
-		M = material_list[material_index];
+		this->M = (Material*)M;
 		obj_type = 'S';
 	}
 
@@ -240,12 +209,12 @@ public:
 	double max[3];
 
 	// size_x is actually half the total width of the cube, since size_x is added AND subtracted from center to get bounding planes
-	Box(double light_radius, double pos_x, double pos_y, double pos_z, int material_index, double size_x, double size_y, double size_z) {
+	Box(double light_radius, double pos_x, double pos_y, double pos_z, const Material* M, double size_x, double size_y, double size_z) {
 		this->light_radius = light_radius;
 		pos[0] = pos_x;
 		pos[1] = pos_y;
 		pos[2] = pos_z;
-		M = material_list[material_index];
+		this->M = (Material*)M;
 		min[0] = pos[0] - size_x;
 		min[1] = pos[1] - size_y;
 		min[2] = pos[2] - size_z;
@@ -337,7 +306,7 @@ public:
 
 	Group() {}
 
-	Group(Object** objects, int num_objects, int combine_method, double group_radius, double pos_x, double pos_y, double pos_z, int material_index) : objects(objects), num_objects(num_objects) { // 0 for Union, 1 for intersection, 2 for Difference
+	Group(Object** objects, int num_objects, int combine_method, double group_radius, double pos_x, double pos_y, double pos_z, const Material* M) : objects(objects), num_objects(num_objects) { // 0 for Union, 1 for intersection, 2 for Difference
 		Union = (combine_method == 0);
 		Intersection = (combine_method == 1);
 		Difference = (combine_method == 2);
@@ -345,7 +314,7 @@ public:
 		pos[0] = pos_x;
 		pos[1] = pos_y;
 		pos[2] = pos_z;
-		this->M = material_list[material_index];
+		this->M = (Material*)M;
 		for (int child_idx = 0; child_idx < num_objects; child_idx++) objects[child_idx]->parent = this;
 		obj_type = 'G';
 	}
@@ -410,9 +379,9 @@ public:
 };
 
 Object* adam_objects[3] = {
-	new Box(.1, .3, 0, 3.5, 0, .1, .1, .1),
-	new Box(.1, .3, .3, 3.5, 3, .1, .1, .1),
-	new Sphere(.1, .3, 0, 1, .2, 1)
+	new Box(.1, .3, 0, 3.5, &light, .1, .1, .1),
+	new Box(.1, .3, .3, 3.5, &light2, .1, .1, .1),
+	new Sphere(.1, .3, 0, 1, .2, &wall)
 };
 
 Group adam(
@@ -420,7 +389,7 @@ Group adam(
 	0, // combine method
 	100, // bounding sphere radius
 	0, 0, 0, // bounding sphere position
-	2 // material index
+	&air // material index
 );
 
 Material* materialAt(Object* cur_obj, double* point, Material* blacklisted) {
@@ -528,7 +497,7 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 		normalize(view_transmit_dir, 3);
 
 		// apply roughness to transmission and reflection vectors
-		if (m2 == material_list[2]) {
+		if (m2 == &air) {
 			for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = m1->roughness * rand_dir[dim] + (1 - m1->roughness) * view_reflect_dir[dim];
 			for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = m1->roughness * -rand_dir[dim] + (1 - m1->roughness) * view_transmit_dir[dim];
 		}
