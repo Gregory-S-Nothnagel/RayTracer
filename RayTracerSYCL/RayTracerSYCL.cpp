@@ -130,7 +130,7 @@ class Object {
 public:
 
 	double pos[3];
-	Material* M;
+	const Material* M;
 	double light_radius; // when an object is emissive, for ambient lighting it is treated as a sphere of this radius
 	void* parent = nullptr; // cast to group pointer
 	int precedence;
@@ -157,7 +157,7 @@ public:
 		pos[0] = pos_x;
 		pos[1] = pos_y;
 		pos[2] = pos_z;
-		this->M = (Material*)M;
+		this->M = M;
 		obj_type = 'S';
 	}
 
@@ -214,7 +214,7 @@ public:
 		pos[0] = pos_x;
 		pos[1] = pos_y;
 		pos[2] = pos_z;
-		this->M = (Material*)M;
+		this->M = M;
 		min[0] = pos[0] - size_x;
 		min[1] = pos[1] - size_y;
 		min[2] = pos[2] - size_z;
@@ -327,10 +327,10 @@ public:
 	}
 
 	// given view dir and pos, find m2, intersection_dist, normal. m2 is returned, the rest are passed by ref
-	Material* getIntersect(Material* m1, double* intersection_dist, double* normal, double* view_dir, double* view_pos, double* data) const {
+	const Material* getIntersect(const Material* m1, double* intersection_dist, double* normal, double* view_dir, double* view_pos, double* data) const {
 
 		// get info for each group and shape object
-		Material* closest_object_material = nullptr;
+		const Material* closest_object_material = nullptr;
 		for (int child_idx = 0; child_idx < num_objects; child_idx++) {
 			double dist = objects[child_idx]->getDistance(view_dir, view_pos, m1 == objects[child_idx]->M);
 
@@ -392,7 +392,7 @@ Group adam(
 	&air // material index
 );
 
-Material* materialAt(Object* cur_obj, double* point, Material* blacklisted) {
+const Material* materialAt(Object* cur_obj, double* point, const Material* blacklisted) {
 
 	Group* cur_obj_as_group = (Group*)cur_obj;
 
@@ -415,7 +415,7 @@ Material* materialAt(Object* cur_obj, double* point, Material* blacklisted) {
 
 }
 
-void findColor(Material* m1, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
+void findColor(const Material* m1, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
 	
 	double local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	double local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
@@ -423,7 +423,7 @@ void findColor(Material* m1, double* view_dir, double* view_pos, double factor, 
 	for (int ray_depth = 0; ray_depth <= 2; ray_depth++) {
 
 		// initialize values needed for light calculation: m1 and m2, 
-		Material* m2 = nullptr;
+		const Material* m2 = nullptr;
 		double intersection_dist = -1;
 		double normal[3] = { 0, 0, 0 }; // normal at intersection
 
