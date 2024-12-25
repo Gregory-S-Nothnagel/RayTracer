@@ -378,6 +378,10 @@ public:
 
 };
 
+// Basically say "Group isn't implicitly defined as device-copyable, but trust me, it is" (it really isn't at the moment)
+template<>
+struct sycl::is_device_copyable<Group> : std::true_type {};
+
 const Material* materialAt(Object* cur_obj, double* point, const Material* blacklisted) {
 
 	Group* cur_obj_as_group = (Group*)cur_obj;
