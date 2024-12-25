@@ -378,20 +378,6 @@ public:
 
 };
 
-Object* adam_objects[3] = {
-	new Box(.1, .3, 0, 3.5, &light, .1, .1, .1),
-	new Box(.1, .3, .3, 3.5, &light2, .1, .1, .1),
-	new Sphere(.1, .3, 0, 1, .2, &wall)
-};
-
-Group adam(
-	(Object**)adam_objects, 3,
-	0, // combine method
-	100, // bounding sphere radius
-	0, 0, 0, // bounding sphere position
-	&air // material index
-);
-
 const Material* materialAt(Object* cur_obj, double* point, const Material* blacklisted) {
 
 	Group* cur_obj_as_group = (Group*)cur_obj;
@@ -415,10 +401,11 @@ const Material* materialAt(Object* cur_obj, double* point, const Material* black
 
 }
 
-void findColor(const Material* m1, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
+void findColor(Group* adam, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
 	
 	double local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	double local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
+	const Material* m1 = adam->M;
 
 	for (int ray_depth = 0; ray_depth <= 2; ray_depth++) {
 
@@ -427,7 +414,7 @@ void findColor(const Material* m1, double* view_dir, double* view_pos, double fa
 		double intersection_dist = -1;
 		double normal[3] = { 0, 0, 0 }; // normal at intersection
 
-		m2 = adam.getIntersect(m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
+		m2 = adam->getIntersect(m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
 
 		// get intersection point of view ray with object so we can do other calculations using it
 		double intersection_point[3];
@@ -441,9 +428,9 @@ void findColor(const Material* m1, double* view_dir, double* view_pos, double fa
 		}
 
 		// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
-		if (m1 != adam.M && m1 == m2) {
-			m2 = materialAt((Object*) & adam, intersection_point, m1);
-			if (m2 == nullptr) m2 = adam.M;
+		if (m1 != adam->M && m1 == m2) {
+			m2 = materialAt((Object*)adam, intersection_point, m1);
+			if (m2 == nullptr) m2 = adam->M;
 		}
 
 		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
@@ -541,7 +528,22 @@ void findColor(const Material* m1, double* view_dir, double* view_pos, double fa
 
 #ifdef GPU_ENABLE
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos, uint64_t* rand_seeds) {
-    sycl::queue q;
+    
+	Object* adam_objects[3] = {
+	new Box(.1, .3, 0, 3.5, &light, .1, .1, .1),
+	new Box(.1, .3, .3, 3.5, &light2, .1, .1, .1),
+	new Sphere(.1, .3, 0, 1, .2, &wall)
+	};
+
+	Group adam(
+		(Object**)adam_objects, 3,
+		0, // combine method
+		100, // bounding sphere radius
+		0, 0, 0, // bounding sphere position
+		&air // material index
+	);
+	
+	sycl::queue q;
     sycl::buffer<unsigned char, 1> imageBuffer((unsigned char*)image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
 	sycl::buffer<double, 1> imageBuffer_double((double*)image_data_double, sycl::range<1>(WIDTH * HEIGHT * 3));
 
@@ -561,7 +563,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 			// call raytracing function to get this fragment's color
 			double frag_color[3] = { 0, 0, 0 };
 
-			findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[idx]));
+			findColor((Group*) & adam, frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[idx]));
 			for (int channel = 0; channel < 3; channel++) {
 				image_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 				image_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
@@ -574,6 +576,20 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 #else
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos, uint64_t* rand_seeds) {
 	
+	Object* adam_objects[3] = {
+	new Box(.1, .3, 0, 3.5, &light, .1, .1, .1),
+	new Box(.1, .3, .3, 3.5, &light2, .1, .1, .1),
+	new Sphere(.1, .3, 0, 1, .2, &wall)
+	};
+
+	Group adam(
+		(Object**)adam_objects, 3,
+		0, // combine method
+		100, // bounding sphere radius
+		0, 0, 0, // bounding sphere position
+		&air // material index
+	);
+
 	// for each fragment (each pixel on screen)...
 	for (int pixel_index = 0; pixel_index < WIDTH * HEIGHT; pixel_index++) {
 		int w = pixel_index % WIDTH;
@@ -586,7 +602,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 
 		// call raytracing function to get this fragment's color
 		double frag_color[3] = { 0, 0, 0 };
-		findColor((adam.M), frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[pixel_index]));
+		findColor(&adam, frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[pixel_index]));
 		for (int channel = 0; channel < 3; channel++) {
 			image_data_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 			image_data_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
