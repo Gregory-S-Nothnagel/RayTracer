@@ -135,23 +135,18 @@ public:
 	void* parent = nullptr; // cast to group pointer
 	int precedence;
 	char obj_type; // group, sphere, box, etc.
+	double radius;
+	double min[3];
+	double max[3];
+	Object* objects = nullptr;
+	int num_objects = 0;
+	bool Union = false;
+	bool Intersection = false;
+	bool Difference = false; // I, U, D for intersection, union, difference
 
 	Object() {}
 
-	// assumes view_dir is normalized, which it should be
-	virtual double getDistance(const double* view_dir, const double* view_pos, bool back_faces) const { return -1; }
-
-	virtual void getNormal(const double* surface_point, double* normal) const {}
-
-	virtual bool inside(double* point) const { return false; }
-
-};
-class Sphere : public Object {
-public:
-
-	double radius;
-
-	Sphere(double light_radius, double pos_x, double pos_y, double pos_z, double radius, const Material* M) {
+	Object(double light_radius, double pos_x, double pos_y, double pos_z, double radius, const Material* M) {
 		this->light_radius = light_radius;
 		this->radius = radius;
 		pos[0] = pos_x;
@@ -161,55 +156,7 @@ public:
 		obj_type = 'S';
 	}
 
-	double getDistance(const double* view_dir, const double* view_pos, bool back_faces) const {
-
-		// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
-
-		// Geometric solution
-		double L[3] = { pos[0] - view_pos[0], pos[1] - view_pos[1], pos[2] - view_pos[2] };
-		double tca = dot3D(L, view_dir);
-		//if (tca < 0) return -1; // bad when you don't want to cull backfaces
-		double d2 = dot3D(L, L) - tca * tca;
-		//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
-		double thc = sqrt(radius * radius - d2);
-		double t0 = tca - thc;
-		double t1 = tca + thc;
-
-		if (back_faces) {
-			return std::max(t0, t1);
-		}
-		else {
-			if (t0 > t1) std::swap(t0, t1);
-
-			if (t0 < 0) {
-				t0 = t1; // If t0 is negative, let's use t1 instead.
-				if (t0 < 0)
-					return -1; // Both t0 and t1 are negative.
-			}
-
-			return t0;
-		}
-
-	}
-
-	void getNormal(const double* surface_point, double* normal) const {
-		for (int dim = 0; dim < 3; dim++) normal[dim] = surface_point[dim] - pos[dim];
-		normalize(normal, 3);
-	}
-
-	bool inside(double* point) const {
-		return power(point[0] - pos[0], 2) + power(point[1] - pos[1], 2) + power(point[2] - pos[2], 2) < radius * radius;
-	}
-
-};
-class Box : public Object {
-public:
-
-	double min[3];
-	double max[3];
-
-	// size_x is actually half the total width of the cube, since size_x is added AND subtracted from center to get bounding planes
-	Box(double light_radius, double pos_x, double pos_y, double pos_z, const Material* M, double size_x, double size_y, double size_z) {
+	Object(double light_radius, double pos_x, double pos_y, double pos_z, const Material* M, double size_x, double size_y, double size_z) {
 		this->light_radius = light_radius;
 		pos[0] = pos_x;
 		pos[1] = pos_y;
@@ -224,89 +171,7 @@ public:
 		obj_type = 'B';
 	}
 
-	double getDistance(const double* view_dir, const double* view_pos, bool back_faces) const {
-
-		// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection.html
-
-		// 't' in a variable represents the idea of intersection (tzmin is minimum intersection distance from view_pos to one of the z bounding planes)
-
-		// tmin is really txmin at the start, it just gets repurposed later, so we use its repurposed name from the start
-		float tmin = (min[0] - view_pos[0]) / view_dir[0];
-		float tmax = (max[0] - view_pos[0]) / view_dir[0];
-
-		if (tmin > tmax) std::swap(tmin, tmax);
-
-		float tymin = (min[1] - view_pos[1]) / view_dir[1];
-		float tymax = (max[1] - view_pos[1]) / view_dir[1];
-
-		if (tymin > tymax) std::swap(tymin, tymax);
-
-		if ((tmin > tymax) || (tymin > tmax)) return -1;
-
-		if (tymin > tmin) tmin = tymin;
-		if (tymax < tmax) tmax = tymax;
-
-		float tzmin = (min[2] - view_pos[2]) / view_dir[2];
-		float tzmax = (max[2] - view_pos[2]) / view_dir[2];
-
-		if (tzmin > tzmax) std::swap(tzmin, tzmax);
-
-		if ((tmin > tzmax) || (tzmin > tmax)) return -1;
-
-		if (tzmin > tmin) tmin = tzmin;
-		if (tzmax < tmax) tmax = tzmax;
-
-		return std::min(tmin, tmax);
-	}
-
-	void getNormal(const double* surface_point, double* normal) const {
-
-		// distance from min and max in each dimension
-		double distances[6];
-		for (int dim = 0; dim < 3; dim++) {
-			distances[dim * 2 + 0] = surface_point[dim] - min[dim];
-			distances[dim * 2 + 1] = max[dim] - surface_point[dim];
-		}
-
-		// finding the side with the closest distance (in its dimension, to the surface point)
-		double closest_distance = NAN;
-		int closest_side = 0;
-		for (int side = 0; side < 6; side++) {
-			if (!(distances[side] > closest_distance)) {
-				closest_distance = distances[side];
-				closest_side = side;
-			}
-		}
-
-		// closest side affects that dimension of normal, all other dimensions of normal are zero
-		for (int dim = 0; dim < 3; dim++) {
-			if (closest_side == dim * 2 + 0) normal[dim] = -1;
-			else if (closest_side == dim * 2 + 1) normal[dim] = 1;
-			else normal[dim] = 0;
-		}
-
-		normalize(normal, 3);
-
-	}
-
-	bool inside(double* position) const {
-		return position[0] > min[0] && position[1] > min[1] && position[2] > min[2] &&
-			position[0] < max[0] && position[1] < max[1] && position[2] < max[2];
-	}
-
-};
-class Group : public Object {
-public:
-	double radius = 0; // must be same location as Sphere
-	Object** objects = nullptr; // first object is always the one whose volume remains in even of overlap
-	int num_objects = 0;
-	bool Union = false;
-	bool Intersection = false;
-	bool Difference = false; // I, U, D for intersection, union, difference
-
-	Group() {}
-
-	Group(Object** objects, int num_objects, int combine_method, double group_radius, double pos_x, double pos_y, double pos_z, const Material* M) : objects(objects), num_objects(num_objects) { // 0 for Union, 1 for intersection, 2 for Difference
+	Object(Object* objects, int num_objects, int combine_method, double group_radius, double pos_x, double pos_y, double pos_z, const Material* M) : objects(objects), num_objects(num_objects) { // 0 for Union, 1 for intersection, 2 for Difference
 		Union = (combine_method == 0);
 		Intersection = (combine_method == 1);
 		Difference = (combine_method == 2);
@@ -315,14 +180,129 @@ public:
 		pos[1] = pos_y;
 		pos[2] = pos_z;
 		this->M = (Material*)M;
-		for (int child_idx = 0; child_idx < num_objects; child_idx++) objects[child_idx]->parent = this;
+		for (int child_idx = 0; child_idx < num_objects; child_idx++) objects[child_idx].parent = this;
 		obj_type = 'G';
 	}
 
-	// distance to this group's bounding sphere
 	double getDistance(const double* view_dir, const double* view_pos, bool back_faces) const {
 
-		return ((Sphere*)this)->getDistance(view_dir, view_dir, true);
+		if (obj_type == 'S' || obj_type == 'G') {
+		
+			// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
+
+			// Geometric solution
+			double L[3] = { pos[0] - view_pos[0], pos[1] - view_pos[1], pos[2] - view_pos[2] };
+			double tca = dot3D(L, view_dir);
+			//if (tca < 0) return -1; // bad when you don't want to cull backfaces
+			double d2 = dot3D(L, L) - tca * tca;
+			//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
+			double thc = sqrt(radius * radius - d2);
+			double t0 = tca - thc;
+			double t1 = tca + thc;
+
+			if (back_faces) {
+				return std::max(t0, t1);
+			}
+			else {
+				if (t0 > t1) std::swap(t0, t1);
+
+				if (t0 < 0) {
+					t0 = t1; // If t0 is negative, let's use t1 instead.
+					if (t0 < 0)
+						return -1; // Both t0 and t1 are negative.
+				}
+
+				return t0;
+			}
+		
+		}
+		else if (obj_type == 'B') {
+		
+			// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection.html
+
+			// 't' in a variable represents the idea of intersection (tzmin is minimum intersection distance from view_pos to one of the z bounding planes)
+
+			// tmin is really txmin at the start, it just gets repurposed later, so we use its repurposed name from the start
+			float tmin = (min[0] - view_pos[0]) / view_dir[0];
+			float tmax = (max[0] - view_pos[0]) / view_dir[0];
+
+			if (tmin > tmax) std::swap(tmin, tmax);
+
+			float tymin = (min[1] - view_pos[1]) / view_dir[1];
+			float tymax = (max[1] - view_pos[1]) / view_dir[1];
+
+			if (tymin > tymax) std::swap(tymin, tymax);
+
+			if ((tmin > tymax) || (tymin > tmax)) return -1;
+
+			if (tymin > tmin) tmin = tymin;
+			if (tymax < tmax) tmax = tymax;
+
+			float tzmin = (min[2] - view_pos[2]) / view_dir[2];
+			float tzmax = (max[2] - view_pos[2]) / view_dir[2];
+
+			if (tzmin > tzmax) std::swap(tzmin, tzmax);
+
+			if ((tmin > tzmax) || (tzmin > tmax)) return -1;
+
+			if (tzmin > tmin) tmin = tzmin;
+			if (tzmax < tmax) tmax = tzmax;
+
+			return std::min(tmin, tmax);
+		
+		}
+
+
+	}
+
+	void getNormal(const double* surface_point, double* normal) const {
+
+		if (obj_type == 'S') {
+		
+			for (int dim = 0; dim < 3; dim++) normal[dim] = surface_point[dim] - pos[dim];
+		
+		}
+		else if (obj_type == 'B') {
+		
+			// distance from min and max in each dimension
+			double distances[6];
+			for (int dim = 0; dim < 3; dim++) {
+				distances[dim * 2 + 0] = surface_point[dim] - min[dim];
+				distances[dim * 2 + 1] = max[dim] - surface_point[dim];
+			}
+
+			// finding the side with the closest distance (in its dimension, to the surface point)
+			double closest_distance = NAN;
+			int closest_side = 0;
+			for (int side = 0; side < 6; side++) {
+				if (!(distances[side] > closest_distance)) {
+					closest_distance = distances[side];
+					closest_side = side;
+				}
+			}
+
+			// closest side affects that dimension of normal, all other dimensions of normal are zero
+			for (int dim = 0; dim < 3; dim++) {
+				if (closest_side == dim * 2 + 0) normal[dim] = -1;
+				else if (closest_side == dim * 2 + 1) normal[dim] = 1;
+				else normal[dim] = 0;
+			}
+		
+		}
+
+		normalize(normal, 3);
+
+	}
+
+	bool inside(double* point) const {
+
+		if (obj_type == 'S' || obj_type == 'G') {
+			return power(point[0] - pos[0], 2) + power(point[1] - pos[1], 2) + power(point[2] - pos[2], 2) < radius * radius;
+		}
+		else if (obj_type == 'B') {
+			return point[0] > min[0] && point[1] > min[1] && point[2] > min[2] &&
+				point[0] < max[0] && point[1] < max[1] && point[2] < max[2];
+		}
 
 	}
 
@@ -332,10 +312,10 @@ public:
 		// get info for each group and shape object
 		const Material* closest_object_material = nullptr;
 		for (int child_idx = 0; child_idx < num_objects; child_idx++) {
-			double dist = objects[child_idx]->getDistance(view_dir, view_pos, m1 == objects[child_idx]->M);
+			double dist = objects[child_idx].getDistance(view_dir, view_pos, m1 == objects[child_idx].M);
 
-			if (dist > 0 && objects[child_idx]->obj_type == 'G') {
-				//return ((Group*)objects[child_idx])->getIntersect(m1, intersection_dist, normal, view_dir, view_pos, data);
+			if (dist > 0 && objects[child_idx].obj_type == 'G') {
+				//return ((Object*)objects[child_idx])->getIntersect(m1, intersection_dist, normal, view_dir, view_pos, data);
 			}
 			else {
 				if (((dist < (*intersection_dist) && dist >= 0) || ((*intersection_dist) < 0 && dist >= 0))) {
@@ -346,12 +326,12 @@ public:
 					}
 
 					double temp_normal[3];
-					objects[child_idx]->getNormal(intersection_point, temp_normal);
+					objects[child_idx].getNormal(intersection_point, temp_normal);
 
 					// if intersect material not same material as what ray is inside of, intersect normal must be opposite of view_dir
 					// if intersect material IS material ray is inside of, normal must be same as view dir (ie the ray must be exiting the material)
-					if (objects[child_idx]->M != m1 && dot3D(temp_normal, view_dir) > 0) {}
-					else if (objects[child_idx]->M == m1 && dot3D(temp_normal, view_dir) < 0) {}
+					if (objects[child_idx].M != m1 && dot3D(temp_normal, view_dir) > 0) {}
+					else if (objects[child_idx].M == m1 && dot3D(temp_normal, view_dir) < 0) {}
 					else {
 						double intersection_point[3];
 						for (int dim = 0; dim < 3; dim++) {
@@ -359,8 +339,8 @@ public:
 						}
 
 						(*intersection_dist) = dist;
-						objects[child_idx]->getNormal(intersection_point, normal);
-						closest_object_material = objects[child_idx]->M;
+						objects[child_idx].getNormal(intersection_point, normal);
+						closest_object_material = objects[child_idx].M;
 					}
 
 				}
@@ -372,27 +352,24 @@ public:
 
 	}
 
-	bool inside(double* point) const {
-		return power(point[0] - pos[0], 2) + power(point[1] - pos[1], 2) + power(point[2] - pos[2], 2) < radius * radius;
-	}
 
 };
 
-// Basically say "Group isn't implicitly defined as device-copyable, but trust me, it is" (it really isn't at the moment)
+// Basically say "Object isn't implicitly defined as device-copyable, but trust me, it is" (it really isn't at the moment)
 template<>
-struct sycl::is_device_copyable<Group> : std::true_type {};
+struct sycl::is_device_copyable<Object> : std::true_type {};
 
 const Material* materialAt(Object* cur_obj, double* point, const Material* blacklisted) {
 
-	Group* cur_obj_as_group = (Group*)cur_obj;
+	Object* cur_obj_as_group = (Object*)cur_obj;
 
 	while (cur_obj->obj_type == 'G') {
 
 		for (int child_idx = 0; child_idx < cur_obj_as_group->num_objects; child_idx++) {
 
-			if (cur_obj_as_group->objects[child_idx]->M != blacklisted && cur_obj_as_group->objects[child_idx]->inside(point)) {
-				cur_obj = cur_obj_as_group->objects[child_idx];
-				cur_obj_as_group = (Group*)cur_obj;
+			if (cur_obj_as_group->objects[child_idx].M != blacklisted && cur_obj_as_group->objects[child_idx].inside(point)) {
+				cur_obj = &(cur_obj_as_group->objects[child_idx]);
+				cur_obj_as_group = (Object*)cur_obj;
 			}
 
 		}
@@ -405,7 +382,7 @@ const Material* materialAt(Object* cur_obj, double* point, const Material* black
 
 }
 
-void findColor(Group* adam, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
+void findColor(Object* adam, double* view_dir, double* view_pos, double factor, double* image_data, uint64_t* rand_seed) {
 	
 	double local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	double local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
@@ -500,10 +477,10 @@ void findColor(Group* adam, double* view_dir, double* view_pos, double factor, d
 		normalize(view_transmit_dir, 3);
 
 		// DEBUG
-		if (ray_depth == 1 && false) {
-			image_data[0] = (view_transmit_dir[0] + 1) / 2 * 255;
-			image_data[1] = (view_transmit_dir[1] + 1) / 2 * 255;
-			image_data[2] = (view_transmit_dir[2] + 1) / 2 * 255;
+		if (ray_depth == 0 && false) {
+			image_data[0] = (normal[0] + 1) / 2 * 255;
+			image_data[1] = 0 * (view_transmit_dir[1] + 1) / 2 * 255;
+			image_data[2] = 0 * (view_transmit_dir[2] + 1) / 2 * 255;
 			return;
 		}
 
@@ -533,14 +510,14 @@ void findColor(Group* adam, double* view_dir, double* view_pos, double factor, d
 #ifdef GPU_ENABLE
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos, uint64_t* rand_seeds) {
     
-	Object* adam_objects[3] = {
-	new Box(.1, .3, 0, 3.5, &light, .1, .1, .1),
-	new Box(.1, .3, .3, 3.5, &light2, .1, .1, .1),
-	new Sphere(.1, .3, 0, 1, .2, &wall)
+	Object adam_objects[3] = {
+		Object(.1, .3, 0, 3.5, &light, .1, .1, .1), // Box
+		Object(.1, .3, .3, 3.5, &light2, .1, .1, .1), // Box
+		Object(.1, .3, 0, 1, .2, &wall) // Sphere
 	};
 
-	Group adam(
-		(Object**)adam_objects, 3,
+	Object adam(
+		(Object*)adam_objects, 3,
 		0, // combine method
 		100, // bounding sphere radius
 		0, 0, 0, // bounding sphere position
@@ -567,7 +544,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 			// call raytracing function to get this fragment's color
 			double frag_color[3] = { 0, 0, 0 };
 
-			findColor((Group*) & adam, frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[idx]));
+			findColor((Object*)&adam, frag_dir, eye_pos, 1.0, frag_color, &(rand_seeds[idx]));
 			for (int channel = 0; channel < 3; channel++) {
 				image_double[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0);
 				image_double[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0);
@@ -580,14 +557,14 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_d
 #else
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, double* image_data_double, int frames_still, double* eye_rotation, double* eye_pos, uint64_t* rand_seeds) {
 	
-	Object* adam_objects[3] = {
-	new Box(.1, .3, 0, 3.5, &light, .1, .1, .1),
-	new Box(.1, .3, .3, 3.5, &light2, .1, .1, .1),
-	new Sphere(.1, .3, 0, 1, .2, &wall)
+	Object adam_objects[3] = {
+		Object(.1, .3, 0, 3.5, &light, .1, .1, .1), // Box
+		Object(.1, .3, .3, 3.5, &light2, .1, .1, .1), // Box
+		Object(.1, .3, 0, 1, .2, &wall) // Sphere
 	};
 
-	Group adam(
-		(Object**)adam_objects, 3,
+	Object adam(
+		(Object*)adam_objects, 3,
 		0, // combine method
 		100, // bounding sphere radius
 		0, 0, 0, // bounding sphere position
