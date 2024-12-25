@@ -11,24 +11,24 @@
 // Global Variables
 std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'D', false} }; // which buttons are being pressed
 int frames_still = 0;
-double eye_pos[3] = { 0, 0, 0 };
-double eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction is (0, 0, 1))
+float eye_pos[3] = { 0, 0, 0 };
+float eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction is (0, 0, 1))
 const int WIDTH = 256, HEIGHT = 256;
 unsigned char image_data[WIDTH * HEIGHT * 3];
-double image_data_double[WIDTH * HEIGHT * 3];
+float image_data_float[WIDTH * HEIGHT * 3];
 uint64_t rand_seeds[WIDTH * HEIGHT]; // initialized in WinMain
 
 // Global Functions
 
 // faster pow() function for when using positive integer powers
-double power(double x, int p) {
-	double product = 1;
+float power(float x, int p) {
+	float product = 1;
 	for (int i = 0; i < p; i++) product *= x;
 	return product;
 }
 // simple normalization function
-void normalize(double* v, int dim) {
-	double length = 0;
+void normalize(float* v, int dim) {
+	float length = 0;
 	for (int i = 0; i < dim; i++) {
 		length += power(v[i], 2);
 	}
@@ -38,15 +38,15 @@ void normalize(double* v, int dim) {
 	}
 }
 // rotates 3d vector around x-axis
-void rotateX(double* v, double angle) { // angle in radians
-	double temp[3] = { v[0], cos(angle) * v[1] - sin(angle) * v[2], sin(angle) * v[1] + cos(angle) * v[2] };
+void rotateX(float* v, float angle) { // angle in radians
+	float temp[3] = { v[0], cos(angle) * v[1] - sin(angle) * v[2], sin(angle) * v[1] + cos(angle) * v[2] };
 	v[0] = temp[0];
 	v[1] = temp[1];
 	v[2] = temp[2];
 }
 // rotates 3d vector around y-axis
-void rotateY(double* v, double angle) { // angle in radians
-	double temp[3] = {
+void rotateY(float* v, float angle) { // angle in radians
+	float temp[3] = {
 		cos(angle) * v[0] + sin(angle) * v[2],
 		v[1],
 		-sin(angle) * v[0] + cos(angle) * v[2]
@@ -76,8 +76,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 		int x_pos = GET_X_LPARAM(lParam);
 		int y_pos = GET_Y_LPARAM(lParam);
 
-		eye_rotation[1] = M_PI * (2 * double(x_pos) / WIDTH - 1);
-		eye_rotation[0] = -M_PI * (double(y_pos) / WIDTH - .5);
+		eye_rotation[1] = M_PI * (2 * float(x_pos) / WIDTH - 1);
+		eye_rotation[0] = -M_PI * (float(y_pos) / WIDTH - .5f);
 
 	}
 
@@ -101,7 +101,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 			hdc,                          // Handle to the device context for the window.
 			0, 0, WIDTH, HEIGHT,          // Destination rectangle on the screen.
 			0, 0, WIDTH, HEIGHT,          // Source rectangle from the image.
-			image_data,                    // Pointer to the raw image data.
+			image_data,                   // Pointer to the raw image data.
 			&bmi,                         // Pointer to the BITMAPINFO structure describing the image.
 			DIB_RGB_COLORS,               // Indicates that the image uses RGB colors (not a palette).
 			SRCCOPY                       // Raster operation code - simply copy the source pixels to the destination.
@@ -118,7 +118,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 		// change eye position based on key presses and view direction
 		if (key_pressed['W'] || key_pressed['A'] || key_pressed['S'] || key_pressed['D']) {
 
-			double move_dir[3] = { 0, 0, 0 };
+			float move_dir[3] = { 0, 0, 0 };
 			if (key_pressed['W']) move_dir[2] += 1;
 			if (key_pressed['A']) move_dir[0] -= 1;
 			if (key_pressed['S']) move_dir[2] -= 1;
@@ -132,7 +132,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 		}
 
-		func(WIDTH, HEIGHT, image_data, image_data_double, frames_still, eye_rotation, eye_pos, rand_seeds);
+		func(WIDTH, HEIGHT, image_data, image_data_float, frames_still, eye_rotation, eye_pos, rand_seeds);
 
 		frames_still++;
 
