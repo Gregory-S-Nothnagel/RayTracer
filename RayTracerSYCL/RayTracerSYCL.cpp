@@ -513,7 +513,7 @@ public:
 		pos[2] = pos_z;
 	}
 
-	float getDistance(const float* view_dir, const float* view_pos, bool back_faces) const {
+	float getDistance(float* view_dir, float* view_pos, bool back_faces) {
 
 		// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
 
@@ -553,12 +553,12 @@ void getColor(Sphere* sphere_list, float* frag_dir, float* eye_pos, float* frag_
 	float dist = sphere_list[0].getDistance(frag_dir, eye_pos, false);
 	float dist2 = sphere_list[1].getDistance(frag_dir, eye_pos, false);
 
-	frag_color[0] = 0;
-	frag_color[1] = 0;
-	frag_color[2] = 0;
+	//frag_color[0] = (eye_pos[0] + 1) / 2 * 255;
+	//frag_color[1] = (frag_dir[1] + 1) / 2 * 255;
+	//frag_color[2] = (eye_pos[2] + 1) / 2 * 255;
 
-	if (dist2 < 0) frag_color[0] = 255;
-	if (dist < 0) frag_color[1] = 255;
+	if (dist2 > 0) frag_color[0] = 255;
+	if (dist > 0) frag_color[1] = 255;
 
 }
 
@@ -569,8 +569,8 @@ void getColor(Sphere* sphere_list, float* frag_dir, float* eye_pos, float* frag_
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint64_t* rand_seeds) {
 
 	Sphere objects[2] = {
-		Sphere(.3f, 0, 3.5f, .2f),
-		Sphere(.3f, -1, 3.5f, .2f)
+		Sphere(1.3f, 0, 1.5f, .2f),
+		Sphere(1.3f, -1, 1.5f, .2f)
 	};
 
     sycl::buffer<unsigned char, 1> imageBuffer(image_data, sycl::range<1>(WIDTH * HEIGHT * 3));

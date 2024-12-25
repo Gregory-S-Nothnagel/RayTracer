@@ -13,7 +13,7 @@ std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'
 int frames_still = 0;
 float eye_pos[3] = { 0, 0, 0 };
 float eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction is (0, 0, 1))
-const int WIDTH = 1000, HEIGHT = 1000;
+const int WIDTH = 500, HEIGHT = 500;
 unsigned char image_data[WIDTH * HEIGHT * 3];
 float image_data_float[WIDTH * HEIGHT * 3];
 uint64_t rand_seeds[WIDTH * HEIGHT]; // initialized in WinMain
