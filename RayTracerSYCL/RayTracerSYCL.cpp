@@ -498,20 +498,95 @@ void findColor(Object* adam, float* view_dir, float* view_pos, float factor, flo
 
 }
 
-//#define GPU_ENABLE
+
+class Sphere {
+public:
+	float pos[3];
+	float radius;
+
+	Sphere() {}
+
+	Sphere(float pos_x, float pos_y, float pos_z, float radius) {
+		this->radius = radius;
+		pos[0] = pos_x;
+		pos[1] = pos_y;
+		pos[2] = pos_z;
+	}
+
+	float getDistance(const float* view_dir, const float* view_pos, bool back_faces) const {
+
+		// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
+
+		// Geometric solution
+		float L[3] = { pos[0] - view_pos[0], pos[1] - view_pos[1], pos[2] - view_pos[2] };
+		float tca = dot3D(L, view_dir);
+		//if (tca < 0) return -1; // bad when you don't want to cull backfaces
+		float d2 = dot3D(L, L) - tca * tca;
+		//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
+		float thc = sqrt(radius * radius - d2);
+		float t0 = tca - thc;
+		float t1 = tca + thc;
+
+		if (back_faces) {
+			return std::max(t0, t1);
+		}
+		else {
+			if (t0 > t1) std::swap(t0, t1);
+
+			if (t0 < 0) {
+				t0 = t1; // If t0 is negative, let's use t1 instead.
+				if (t0 < 0)
+					return -1; // Both t0 and t1 are negative.
+			}
+
+			return t0;
+		}
+
+
+	}
+
+
+};
+
+void getColor(Sphere* sphere_list, float* frag_dir, float* eye_pos, float* frag_color) {
+
+	float dist = sphere_list[0].getDistance(frag_dir, eye_pos, false);
+	float dist2 = sphere_list[1].getDistance(frag_dir, eye_pos, false);
+
+	frag_color[0] = 0;
+	frag_color[1] = 0;
+	frag_color[2] = 0;
+
+	if (dist2 < 0) frag_color[0] = 255;
+	if (dist < 0) frag_color[1] = 255;
+
+}
+
+
+#define GPU_ENABLE
 
 #ifdef GPU_ENABLE
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint64_t* rand_seeds) {
 
-    sycl::buffer<unsigned char, 1> imageBuffer((unsigned char*)image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
+	Sphere objects[2] = {
+		Sphere(.3f, 0, 3.5f, .2f),
+		Sphere(.3f, -1, 3.5f, .2f)
+	};
+
+    sycl::buffer<unsigned char, 1> imageBuffer(image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
 	sycl::buffer<float, 1> imageBuffer_float(image_data_float, sycl::range<1>(WIDTH * HEIGHT * 3));
-	sycl::buffer<float, 1> eye_rotation_buffer(eye_rotation, sycl::range<1>(3));
+	sycl::buffer<float, 1> eye_rotation_buffer(eye_rotation, sycl::range<1>(2));
+	sycl::buffer<float, 1> eye_position_buffer(eye_pos, sycl::range<1>(3));
+	sycl::buffer<Sphere, 1> sphere_buffer(objects, sycl::range<1>(2));
 
     Q.submit([&](sycl::handler& h) {
 		auto image = imageBuffer.get_access<sycl::access::mode::read_write>(h);
 		auto image_float = imageBuffer_float.get_access<sycl::access::mode::read_write>(h);
-		auto eye_rotation_acc = eye_rotation_buffer.get_access<sycl::access::mode::read>(h);
-        h.parallel_for(sycl::range<1>(WIDTH * HEIGHT), [=](sycl::id<1> idx) {
+		sycl::accessor<float> eye_position_acc = eye_position_buffer.get_access<sycl::access::mode::read_write>(h);
+		sycl::accessor<float> eye_rotation_acc = eye_rotation_buffer.get_access<sycl::access::mode::read_write>(h);
+		sycl::accessor<Sphere> sphere_acc = sphere_buffer.get_access<sycl::access::mode::read_write>(h);
+        
+		h.parallel_for(sycl::range<1>(WIDTH * HEIGHT), [=](sycl::id<1> idx) {
             int w = idx % WIDTH;
             int h = idx / WIDTH;
 
@@ -523,6 +598,8 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 
 			// call raytracing function to get this fragment's color
 			float frag_color[3] = { 0, 0, 0 };
+
+			getColor(sphere_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), frag_color);
 
 			//findColor((Object*)&adam, frag_dir, eye_pos, 1.0f, frag_color, &(rand_seeds[idx]));
 			for (int channel = 0; channel < 3; channel++) {
