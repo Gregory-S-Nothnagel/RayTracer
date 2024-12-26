@@ -111,6 +111,213 @@ public:
 		roughness(roughness) {}
 };
 
+#define GPU_ENABLE
+
+#ifdef GPU_ENABLE
+
+class Sphere {
+public:
+	float pos[3];
+	float radius;
+	int M;
+
+	Sphere() {}
+
+	Sphere(float pos_x, float pos_y, float pos_z, float radius, int mat_index) {
+		this->radius = radius;
+		pos[0] = pos_x;
+		pos[1] = pos_y;
+		pos[2] = pos_z;
+		this->M = mat_index;
+	}
+
+	float getDistance(float* view_dir, float* view_pos, bool back_faces) {
+
+		// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
+
+		// Geometric solution
+		float L[3] = { pos[0] - view_pos[0], pos[1] - view_pos[1], pos[2] - view_pos[2] };
+		float tca = dot3D(L, view_dir);
+		//if (tca < 0) return -1; // bad when you don't want to cull backfaces
+		float d2 = dot3D(L, L) - tca * tca;
+		//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
+		float thc = sqrt(radius * radius - d2);
+		float t0 = tca - thc;
+		float t1 = tca + thc;
+
+		if (back_faces) {
+			return std::max(t0, t1);
+		}
+		else {
+			if (t0 > t1) std::swap(t0, t1);
+
+			if (t0 < 0) {
+				t0 = t1; // If t0 is negative, let's use t1 instead.
+				if (t0 < 0)
+					return -1; // Both t0 and t1 are negative.
+			}
+
+			return t0;
+		}
+
+
+	}
+
+	bool inside(float* point) const {
+
+		return power(point[0] - pos[0], 2) + power(point[1] - pos[1], 2) + power(point[2] - pos[2], 2) < radius * radius;
+
+	}
+
+	void getNormal(float* surface_point, float* normal) {
+
+		for (int dim = 0; dim < 3; dim++) normal[dim] = surface_point[dim] - pos[dim];
+		normalize(normal, 3);
+
+	}
+
+};
+
+// given view dir and pos, find m2, intersection_dist, normal. m2 is returned, the rest are passed by ref
+int getIntersect(Sphere* sphere_list, int num_objects, int m1, float* intersection_dist, float* normal, float* view_dir, float* view_pos, float* data) {
+
+	// get info for each group and shape object
+	int closest_object_material = -1;
+	for (int child_idx = 0; child_idx < num_objects; child_idx++) {
+		float dist = sphere_list[child_idx].getDistance(view_dir, view_pos, m1 == sphere_list[child_idx].M);
+
+		if (((dist < (*intersection_dist) && dist >= 0) || ((*intersection_dist) < 0 && dist >= 0))) {
+
+			float intersection_point[3];
+			for (int dim = 0; dim < 3; dim++) {
+				intersection_point[dim] = view_pos[dim] + view_dir[dim] * dist;
+			}
+
+			float temp_normal[3];
+			sphere_list[child_idx].getNormal(intersection_point, temp_normal);
+
+
+			// if intersect material not same material as what ray is inside of, intersect normal must be opposite of view_dir
+			// if intersect material IS material ray is inside of, normal must be same as view dir (ie the ray must be exiting the material)
+			if (sphere_list[child_idx].M != m1 && dot3D(temp_normal, view_dir) > 0) {}
+			else if (sphere_list[child_idx].M == m1 && dot3D(temp_normal, view_dir) < 0) {}
+			else {
+				(*intersection_dist) = dist;
+				sphere_list[child_idx].getNormal(intersection_point, normal);
+				closest_object_material = sphere_list[child_idx].M;
+			}
+
+		}
+
+	}
+
+	return closest_object_material;
+
+}
+
+int materialAt(Sphere* sphere_list, int num_objects, float* point, int blacklisted_mat) {
+
+	for (int sphere_index = 0; sphere_index < num_objects; sphere_index++) {
+	
+		if (sphere_list[sphere_index].inside(point) && sphere_list[sphere_index].M != blacklisted_mat) {
+			return sphere_list[sphere_index].M;
+		}
+	
+	}
+
+	return -1;
+
+}
+
+void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view_dir, float* view_pos, float factor, float* image_data) {
+
+	int air_mat = 3;
+	float local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
+	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
+	int m1 = air_mat; // air mat index
+
+	for (int ray_bounce = 0; ray_bounce <= 1; ray_bounce++) {
+
+		// initialize values needed for light calculation: m1 and m2, 
+		int m2 = -1;
+		float intersection_dist = -1;
+		float normal[3] = { 0, 0, 0 }; // normal at intersection
+
+		// get intersection material, normal, distance
+		m2 = getIntersect(sphere_list, num_objects, m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
+
+
+
+		// get intersection point of view ray with object so we can do other calculations using it
+		float intersection_point[3];
+		for (int channel = 0; channel < 3; channel++) {
+			intersection_point[channel] = local_view_pos[channel] + local_view_dir[channel] * intersection_dist;
+		}
+
+		// if ray is transmitting through material and hitting a backface, reverse object surface normal
+		if (m1 == m2 && dot3D(local_view_dir, normal) > 0) {
+			for (int dim = 0; dim < 3; dim++) normal[dim] *= -1;
+		}
+
+		// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
+		if (m1 != air_mat && m1 == m2) {
+			m2 = materialAt(sphere_list, num_objects, intersection_point, m1);
+			if (m2 == -1) m2 = air_mat;
+		}
+
+		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
+		if (intersection_dist <= 0) return;
+
+		// add emission light
+		for (int channel = 0; channel < 3; channel++) image_data[channel] += mats[m2].emissivity * mats[m2].color[channel] * factor;
+
+		// add reflected light
+
+		// first, find reflection dir (using formula from https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel.html)
+		float view_reflect_dir[3];
+		float temp = dot3D(local_view_dir, normal);
+		for (int dim = 0; dim < 3; dim++) {
+			view_reflect_dir[dim] = local_view_dir[dim] - 2 * temp * normal[dim];
+		}
+		normalize(view_reflect_dir, 3);
+
+		// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
+		float intersection_eye_vector[3];
+		for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = local_view_pos[dim] - intersection_point[dim];
+		float theta_1 = getAngleVectors(normal, intersection_eye_vector);
+		float theta_2 = asin(mats[m1].refr_index * sin(theta_1) / mats[m2].refr_index);
+
+		float n1costheta1 = mats[m1].refr_index * cos(theta_1);
+		float n1costheta2 = mats[m1].refr_index * cos(theta_2);
+		float n2costheta1 = mats[m2].refr_index * cos(theta_1);
+		float n2costheta2 = mats[m2].refr_index * cos(theta_2);
+		
+		// calculate reflection factor using fresnel equations
+		float rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
+		float rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
+		float reflection_factor = (.5 * rs * rs + .5 * rp * rp);
+
+		// now, onto transmission
+		float c1 = cos(theta_1);
+		float c2 = sqrt(1 - power(mats[m1].refr_index / mats[m2].refr_index, 2) * power(sin(theta_1), 2));
+
+		float view_transmit_dir[3];
+		for (int dim = 0; dim < 3; dim++) {
+			view_transmit_dir[dim] = mats[m1].refr_index * (local_view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
+		}
+		normalize(view_transmit_dir, 3);
+
+		for (int dim = 0; dim < 3; dim++) {
+			local_view_dir[dim] = view_reflect_dir[dim];
+			local_view_pos[dim] = intersection_point[dim];
+		}
+
+	}
+
+}
+
+#else
+
 constexpr Material light(255, 255, 255, 1.0f, // light
 	255, 255, 255, 1.0f,
 	1.5f);
@@ -185,7 +392,7 @@ public:
 	float getDistance(const float* view_dir, const float* view_pos, bool back_faces) const {
 
 		if (obj_type == 'S' || obj_type == 'G') {
-		
+
 			// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
 
 			// Geometric solution
@@ -212,10 +419,10 @@ public:
 
 				return t0;
 			}
-		
+
 		}
 		else if (obj_type == 'B') {
-		
+
 			// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection.html
 
 			// 't' in a variable represents the idea of intersection (tzmin is minimum intersection distance from view_pos to one of the z bounding planes)
@@ -247,7 +454,7 @@ public:
 			if (tzmax < tmax) tmax = tzmax;
 
 			return std::min(tmin, tmax);
-		
+
 		}
 
 
@@ -256,12 +463,12 @@ public:
 	void getNormal(const float* surface_point, float* normal) const {
 
 		if (obj_type == 'S') {
-		
+
 			for (int dim = 0; dim < 3; dim++) normal[dim] = surface_point[dim] - pos[dim];
-		
+
 		}
 		else if (obj_type == 'B') {
-		
+
 			// distance from min and max in each dimension
 			float distances[6];
 			for (int dim = 0; dim < 3; dim++) {
@@ -285,7 +492,7 @@ public:
 				else if (closest_side == dim * 2 + 1) normal[dim] = 1;
 				else normal[dim] = 0;
 			}
-		
+
 		}
 
 		normalize(normal, 3);
@@ -310,7 +517,7 @@ public:
 		// get info for each group and shape object
 		const Material* closest_object_material = nullptr;
 		for (int child_idx = 0; child_idx < num_objects; child_idx++) {
-			double dist = objects[child_idx].getDistance(view_dir, view_pos, m1 == objects[child_idx].M);
+			float dist = objects[child_idx].getDistance(view_dir, view_pos, m1 == objects[child_idx].M);
 
 			if (dist > 0 && objects[child_idx].obj_type == 'G') {
 				//return ((Object*)objects[child_idx])->getIntersect(m1, intersection_dist, normal, view_dir, view_pos, data);
@@ -376,7 +583,7 @@ const Material* materialAt(Object* cur_obj, float* point, const Material* blackl
 }
 
 void findColor(Object* adam, float* view_dir, float* view_pos, float factor, float* image_data, uint64_t* rand_seed) {
-	
+
 	float local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
 	const Material* m1 = adam->M;
@@ -498,79 +705,30 @@ void findColor(Object* adam, float* view_dir, float* view_pos, float factor, flo
 
 }
 
+#endif
 
-class Sphere {
-public:
-	float pos[3];
-	float radius;
-
-	Sphere() {}
-
-	Sphere(float pos_x, float pos_y, float pos_z, float radius) {
-		this->radius = radius;
-		pos[0] = pos_x;
-		pos[1] = pos_y;
-		pos[2] = pos_z;
-	}
-
-	float getDistance(float* view_dir, float* view_pos, bool back_faces) {
-
-		// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
-
-		// Geometric solution
-		float L[3] = { pos[0] - view_pos[0], pos[1] - view_pos[1], pos[2] - view_pos[2] };
-		float tca = dot3D(L, view_dir);
-		//if (tca < 0) return -1; // bad when you don't want to cull backfaces
-		float d2 = dot3D(L, L) - tca * tca;
-		//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
-		float thc = sqrt(radius * radius - d2);
-		float t0 = tca - thc;
-		float t1 = tca + thc;
-
-		if (back_faces) {
-			return std::max(t0, t1);
-		}
-		else {
-			if (t0 > t1) std::swap(t0, t1);
-
-			if (t0 < 0) {
-				t0 = t1; // If t0 is negative, let's use t1 instead.
-				if (t0 < 0)
-					return -1; // Both t0 and t1 are negative.
-			}
-
-			return t0;
-		}
-
-
-	}
-
-
-};
-
-void getColor(Sphere* sphere_list, float* frag_dir, float* eye_pos, float* frag_color) {
-
-	float dist = sphere_list[0].getDistance(frag_dir, eye_pos, false);
-	float dist2 = sphere_list[1].getDistance(frag_dir, eye_pos, false);
-
-	//frag_color[0] = (eye_pos[0] + 1) / 2 * 255;
-	//frag_color[1] = (frag_dir[1] + 1) / 2 * 255;
-	//frag_color[2] = (eye_pos[2] + 1) / 2 * 255;
-
-	if (dist2 > 0) frag_color[0] = 255;
-	if (dist > 0) frag_color[1] = 255;
-
-}
-
-
-#define GPU_ENABLE
 
 #ifdef GPU_ENABLE
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint64_t* rand_seeds) {
 
+	Material mats[4] = {
+		Material(255, 255, 255, 1.0f, // light
+				255, 255, 255, 1.0f,
+				1.5f),
+		Material(255, 255, 255, 0.0f, // wall
+				255, 0, 255, 0.0f,
+				1.33f),
+		Material(255, 255, 255, 0.0f, // air
+				255, 0, 255, 0.5f,
+				1.0f),
+		Material(0, 255, 255, 1.0f, // light2
+				255, 255, 255, 1.0f,
+				1.5f)
+	};
+
 	Sphere objects[2] = {
-		Sphere(1.3f, 0, 1.5f, .2f),
-		Sphere(1.3f, -1, 1.5f, .2f)
+		Sphere(1.3f, 0, 1.0f, .2f, 0), // light 1
+		Sphere(1.3f, 0, 0.5f, .2f, 1) // wall
 	};
 
     sycl::buffer<unsigned char, 1> imageBuffer(image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
@@ -578,6 +736,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 	sycl::buffer<float, 1> eye_rotation_buffer(eye_rotation, sycl::range<1>(2));
 	sycl::buffer<float, 1> eye_position_buffer(eye_pos, sycl::range<1>(3));
 	sycl::buffer<Sphere, 1> sphere_buffer(objects, sycl::range<1>(2));
+	sycl::buffer<Material, 1> mats_buffer(mats, sycl::range<1>(4));
 
     Q.submit([&](sycl::handler& h) {
 		auto image = imageBuffer.get_access<sycl::access::mode::read_write>(h);
@@ -585,6 +744,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 		sycl::accessor<float> eye_position_acc = eye_position_buffer.get_access<sycl::access::mode::read_write>(h);
 		sycl::accessor<float> eye_rotation_acc = eye_rotation_buffer.get_access<sycl::access::mode::read_write>(h);
 		sycl::accessor<Sphere> sphere_acc = sphere_buffer.get_access<sycl::access::mode::read_write>(h);
+		sycl::accessor<Material> mats_acc = mats_buffer.get_access<sycl::access::mode::read_write>(h);
         
 		h.parallel_for(sycl::range<1>(WIDTH * HEIGHT), [=](sycl::id<1> idx) {
             int w = idx % WIDTH;
@@ -599,9 +759,8 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 			// call raytracing function to get this fragment's color
 			float frag_color[3] = { 0, 0, 0 };
 
-			getColor(sphere_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), frag_color);
+			findColor(sphere_acc.get_pointer(), 2, mats_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), 1.0f, frag_color);
 
-			//findColor((Object*)&adam, frag_dir, eye_pos, 1.0f, frag_color, &(rand_seeds[idx]));
 			for (int channel = 0; channel < 3; channel++) {
 				image_float[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0f);
 				image_float[(h * WIDTH + w) * 3 + channel] += frag_color[channel] / (frames_still + 1.0f);
