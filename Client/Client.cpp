@@ -16,7 +16,7 @@ float eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction is
 const int WIDTH = 500, HEIGHT = 500;
 unsigned char image_data[WIDTH * HEIGHT * 3];
 float image_data_float[WIDTH * HEIGHT * 3];
-uint64_t rand_seeds[WIDTH * HEIGHT]; // initialized in WinMain
+uint32_t rand_seeds[WIDTH * HEIGHT]; // initialized in WinMain
 
 // Global Functions
 

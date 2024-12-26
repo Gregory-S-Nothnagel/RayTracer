@@ -74,12 +74,12 @@ float getAngleVectors(const float* BA, const float* BC) { // B is crux of angle
 	return acos(dot3D(BA, BC) / (vectorLength3D(BA) * vectorLength3D(BC)));
 }
 
-void randDirection(float* dir, uint64_t* rand_seed) {
+void randDirection(float* dir, uint32_t* rand_seed) {
 
 	// from here: https://stackoverflow.com/questions/5408276/sampling-uniformly-distributed-random-points-inside-a-spherical-volume
 
-	float phi = (float)randDouble(rand_seed) * M_PI * 2.0f;
-	float costheta = (float)randDouble(rand_seed) * 2.0f - 1.0f;
+	float phi = randFloat(rand_seed) * 3.14159265358979323846f * 2.0f; // can't use M_PI because M_PI is of type double
+	float costheta = randFloat(rand_seed) * 2.0f - 1.0f;
 
 	float theta = acos(costheta);
 	dir[0] = sin(theta) * cos(phi);
@@ -229,14 +229,14 @@ int materialAt(Sphere* sphere_list, int num_objects, float* point, int blacklist
 
 }
 
-void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view_dir, float* view_pos, float factor, float* image_data) {
+void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view_dir, float* view_pos, float factor, float* image_data, uint32_t* rand_seed) {
 
 	int air_mat = 3;
 	float local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
 	int m1 = air_mat; // air mat index
 
-	for (int ray_bounce = 0; ray_bounce <= 1; ray_bounce++) {
+	for (int ray_depth = 0; ray_depth <= 1; ray_depth++) {
 
 		// initialize values needed for light calculation: m1 and m2, 
 		int m2 = -1;
@@ -245,8 +245,6 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 
 		// get intersection material, normal, distance
 		m2 = getIntersect(sphere_list, num_objects, m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
-
-
 
 		// get intersection point of view ray with object so we can do other calculations using it
 		float intersection_point[3];
@@ -291,11 +289,20 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		float n1costheta2 = mats[m1].refr_index * cos(theta_2);
 		float n2costheta1 = mats[m2].refr_index * cos(theta_1);
 		float n2costheta2 = mats[m2].refr_index * cos(theta_2);
-		
+
 		// calculate reflection factor using fresnel equations
 		float rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
 		float rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
 		float reflection_factor = (.5 * rs * rs + .5 * rp * rp);
+
+
+
+		// next, get a random direction
+		float rand_dir[3];
+		randDirection(rand_dir, rand_seed);
+		if (dot3D(rand_dir, normal) < 0) {
+			for (int dim = 0; dim < 3; dim++) rand_dir[dim] *= -1;
+		}
 
 		// now, onto transmission
 		float c1 = cos(theta_1);
@@ -307,10 +314,35 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		}
 		normalize(view_transmit_dir, 3);
 
+		// apply roughness to transmission and reflection vectors
+		if (m2 == air_mat) {
+			for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = mats[m1].roughness * rand_dir[dim] + (1 - mats[m1].roughness) * view_reflect_dir[dim];
+			for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = mats[m1].roughness * -rand_dir[dim] + (1 - mats[m1].roughness) * view_transmit_dir[dim];
+		}
+		else {
+			for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = mats[m2].roughness * rand_dir[dim] + (1 - mats[m2].roughness) * view_reflect_dir[dim];
+			for (int dim = 0; dim < 3; dim++) view_transmit_dir[dim] = mats[m2].roughness * -rand_dir[dim] + (1 - mats[m2].roughness) * view_transmit_dir[dim];
+		}
+		normalize(view_reflect_dir, 3);
+		normalize(view_transmit_dir, 3);
+
+		// DEBUG
+		if (ray_depth == 0 && false) {
+			image_data[0] = (normal[0] + 1) / 2 * 255;
+			image_data[1] = 0 * (view_transmit_dir[1] + 1) / 2 * 255;
+			image_data[2] = 0 * (view_transmit_dir[2] + 1) / 2 * 255;
+			return;
+		}
+
+		// apply transmission OR reflection
+
+		// remember to specify all variables used as input to findColor() function. define m1 and factor if they change! (factor should change!!!)
 		for (int dim = 0; dim < 3; dim++) {
 			local_view_dir[dim] = view_reflect_dir[dim];
 			local_view_pos[dim] = intersection_point[dim];
 		}
+
+		//return;
 
 	}
 
@@ -582,7 +614,7 @@ const Material* materialAt(Object* cur_obj, float* point, const Material* blackl
 
 }
 
-void findColor(Object* adam, float* view_dir, float* view_pos, float factor, float* image_data, uint64_t* rand_seed) {
+void findColor(Object* adam, float* view_dir, float* view_pos, float factor, float* image_data, uint32_t* rand_seed) {
 
 	float local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
@@ -687,7 +719,7 @@ void findColor(Object* adam, float* view_dir, float* view_pos, float factor, flo
 		// apply transmission OR reflection
 
 		// remember to specify all variables used as input to findColor() function. define m1 and factor if they change! (factor should change!!!)
-		if ((float)randDouble(rand_seed) < reflection_factor) {
+		if (randFloat(rand_seed) < reflection_factor) {
 			for (int dim = 0; dim < 3; dim++) {
 				local_view_dir[dim] = view_reflect_dir[dim];
 				local_view_pos[dim] = intersection_point[dim];
@@ -709,14 +741,14 @@ void findColor(Object* adam, float* view_dir, float* view_pos, float factor, flo
 
 
 #ifdef GPU_ENABLE
-void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint64_t* rand_seeds) {
+void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint32_t* rand_seeds) {
 
 	Material mats[4] = {
 		Material(255, 255, 255, 1.0f, // light
 				255, 255, 255, 1.0f,
 				1.5f),
 		Material(255, 255, 255, 0.0f, // wall
-				255, 0, 255, 0.0f,
+				255, 0, 255, 0.5f,
 				1.33f),
 		Material(255, 255, 255, 0.0f, // air
 				255, 0, 255, 0.5f,
@@ -737,6 +769,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 	sycl::buffer<float, 1> eye_position_buffer(eye_pos, sycl::range<1>(3));
 	sycl::buffer<Sphere, 1> sphere_buffer(objects, sycl::range<1>(2));
 	sycl::buffer<Material, 1> mats_buffer(mats, sycl::range<1>(4));
+	sycl::buffer<uint32_t, 1> random_buffer(rand_seeds, sycl::range<1>(WIDTH * HEIGHT));
 
     Q.submit([&](sycl::handler& h) {
 		auto image = imageBuffer.get_access<sycl::access::mode::read_write>(h);
@@ -745,6 +778,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 		sycl::accessor<float> eye_rotation_acc = eye_rotation_buffer.get_access<sycl::access::mode::read_write>(h);
 		sycl::accessor<Sphere> sphere_acc = sphere_buffer.get_access<sycl::access::mode::read_write>(h);
 		sycl::accessor<Material> mats_acc = mats_buffer.get_access<sycl::access::mode::read_write>(h);
+		sycl::accessor<uint32_t> random_acc = random_buffer.get_access<sycl::access::mode::read_write>(h);
         
 		h.parallel_for(sycl::range<1>(WIDTH * HEIGHT), [=](sycl::id<1> idx) {
             int w = idx % WIDTH;
@@ -759,7 +793,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 			// call raytracing function to get this fragment's color
 			float frag_color[3] = { 0, 0, 0 };
 
-			findColor(sphere_acc.get_pointer(), 2, mats_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), 1.0f, frag_color);
+			findColor(sphere_acc.get_pointer(), 2, mats_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), 1.0f, frag_color, &(random_acc.get_pointer()[idx]));
 
 			for (int channel = 0; channel < 3; channel++) {
 				image_float[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0f);
@@ -771,7 +805,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
         }).wait();
 }
 #else
-void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint64_t* rand_seeds) {
+void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint32_t* rand_seeds) {
 	
 	Object adam_objects[3] = {
 		Object(.1f, .3f, 0, 3.5f, &light, .1f, .1f, .1f), // Box
