@@ -405,7 +405,7 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 
 		float view_transmit_dir[3];
 		for (int dim = 0; dim < 3; dim++) {
-			view_transmit_dir[dim] = mats[m1].refr_index * (local_view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
+			view_transmit_dir[dim] = (mats[m1].refr_index / mats[m2].refr_index) * (local_view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
 		}
 		normalize(view_transmit_dir, 3);
 
@@ -847,6 +847,10 @@ void findColor(Object* adam, float* view_dir, float* view_pos, float factor, flo
 #ifdef GPU_ENABLE
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint32_t* rand_seeds) {
 
+	// emmission
+	// optical density & roughness
+	// refr index, general optical density, diffusion distance
+
 	Material mats[4] = {
 		Material(255, 255, 255, 0.0f, // air
 				0, 0, 0, 0.0f,
@@ -857,16 +861,16 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 		Material(500, 0, 500, 1.0f, // light2
 				.5f, 1, .5f, 0.0f,
 				1.1f, 1.0f, 0.0f),
-		Material(255, 255, 255, 0.0f, // wall
-				1, .9f, 1, 0.0f,
-				1.3f, 1.0f, .1f),
+		Material(0, 0, 0, 0.0f, // wall
+				1, .5f, 1, 1.0f,
+				1.33f, 1.0f, .1f),
 	};
 	int air_mat = 0;
 	
 	Sphere objects[3] = {
-		Sphere(.5f, 0, 1, .1f, .1f, .1f, 1), // light 1
-		Sphere(.3f, 0, 1, .1f, 2), // purple orb
-		Sphere(.5f, 0, 0, .1f, 3), // green orb
+		Sphere(.5f, 0, .5f, .1f, .1f, .1f, 1), // light 1
+		Sphere(.3f, 0, .5f, .1f, 2), // purple orb
+		Sphere(.5f, 0, .3f, .1f, 3), // green orb
 	};
 	int num_objects = 3;
 
