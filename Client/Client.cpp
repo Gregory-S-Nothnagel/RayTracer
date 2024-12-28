@@ -127,8 +127,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 			rotateY(move_dir, eye_rotation[1]);
 
-			eye_pos[0] += move_dir[0] * .01;
-			eye_pos[2] += move_dir[2] * .01;
+			eye_pos[0] += move_dir[0] * .1;
+			eye_pos[2] += move_dir[2] * .1;
 
 		}
 
