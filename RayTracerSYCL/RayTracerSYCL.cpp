@@ -279,16 +279,15 @@ public:
 };
 
 // given view dir and pos, find m2, intersection_dist, normal. m2 is returned, the rest are passed by ref
-int getIntersect(Sphere* sphere_list, int num_objects, int m1, float* intersection_dist, float* normal, float* view_dir, float* view_pos, float* data) {
+int getIntersect(Sphere* sphere_list, int num_objects, int m1, int* m2, float* intersection_point, float* intersection_dist, float* normal, float* view_dir, float* view_pos, float* data) {
 
 	// get info for each group and shape object
-	int closest_object_material = -1;
+	(*m2) = -1;
 	for (int child_idx = 0; child_idx < num_objects; child_idx++) {
 		float dist = sphere_list[child_idx].getDistance(view_dir, view_pos, m1 == sphere_list[child_idx].M);
 
 		if (((dist < (*intersection_dist) && dist >= 0) || ((*intersection_dist) < 0 && dist >= 0))) {
 
-			float intersection_point[3];
 			for (int dim = 0; dim < 3; dim++) {
 				intersection_point[dim] = view_pos[dim] + view_dir[dim] * dist;
 			}
@@ -303,14 +302,12 @@ int getIntersect(Sphere* sphere_list, int num_objects, int m1, float* intersecti
 			else {
 				(*intersection_dist) = dist;
 				sphere_list[child_idx].getNormal(intersection_point, normal);
-				closest_object_material = sphere_list[child_idx].M;
+				(*m2) = sphere_list[child_idx].M;
 			}
 
 		}
 
 	}
-
-	return closest_object_material;
 
 }
 
@@ -339,23 +336,18 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 
 		// initialize values needed for light calculation: m1 and m2, 
 		int m2 = -1;
-		float intersection_dist = -1;
 		float normal[3] = { 0, 0, 0 }; // normal at intersection
+		float intersection_point[3];
+		float intersection_dist = -1;
 
-		// get intersection material, normal, distance
-		m2 = getIntersect(sphere_list, num_objects, m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
+		// get intersection material, normal, intersection point
+		getIntersect(sphere_list, num_objects, m1, &m2, intersection_point, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
 		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
 		if (intersection_dist <= 0) break;
 
 		// use m1 and intersection dist to apply Beer-Lambert law
 		for (int channel = 0; channel < 3; channel++) {
 			factors[channel] *= exp(-mats[m1].opt_den[channel] * intersection_dist * mats[m1].general_optical_density);
-		}
-
-		// get intersection point of view ray with object so we can do other calculations using it
-		float intersection_point[3];
-		for (int channel = 0; channel < 3; channel++) {
-			intersection_point[channel] = local_view_pos[channel] + local_view_dir[channel] * intersection_dist;
 		}
 
 		// if ray is transmitting through material and hitting a backface, reverse object surface normal
