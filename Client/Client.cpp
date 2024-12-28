@@ -9,7 +9,7 @@
 #include "RayTracerSYCL.h"
 
 // Global Variables
-std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'D', false} }; // which buttons are being pressed
+std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'D', false}, {VK_SHIFT, false}, {' ', false} }; // which buttons are being pressed
 int frames_still = 0;
 float eye_pos[3] = { 0, 0, 0 };
 float eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction is (0, 0, 1))
@@ -60,12 +60,8 @@ void rotateY(float* v, float angle) { // angle in radians
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
 	// key press events
-	if (uMsg == WM_KEYDOWN) {
-		key_pressed[wParam] = true;
-	}
-	if (uMsg == WM_KEYUP) {
-		key_pressed[wParam] = false;
-	}
+	if (uMsg == WM_KEYDOWN) key_pressed[wParam] = true;
+	if (uMsg == WM_KEYUP) key_pressed[wParam] = false;
 
 	// mouse move events
 	if (uMsg == WM_MOUSEMOVE) {
@@ -116,20 +112,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 	if (uMsg == WM_TIMER) {
 
 		// change eye position based on key presses and view direction
-		if (key_pressed['W'] || key_pressed['A'] || key_pressed['S'] || key_pressed['D']) {
+		if (key_pressed['W'] || key_pressed['A'] || key_pressed['S'] || key_pressed['D'] || key_pressed[VK_SHIFT] || key_pressed[' ']) {
 
 			float move_dir[3] = { 0, 0, 0 };
 			if (key_pressed['W']) move_dir[2] += 1;
 			if (key_pressed['A']) move_dir[0] -= 1;
 			if (key_pressed['S']) move_dir[2] -= 1;
 			if (key_pressed['D']) move_dir[0] += 1;
-			if (!(key_pressed['W'] && key_pressed['S']) && !(key_pressed['A'] && key_pressed['D'])) normalize(move_dir, 3);
+			if (key_pressed[VK_SHIFT]) move_dir[1] += 1;
+			if (key_pressed[' ']) move_dir[1] -= 1;
+			if (!(key_pressed['W'] && key_pressed['S']) && !(key_pressed['A'] && key_pressed['D']) && !(key_pressed[VK_SHIFT] && key_pressed[' '])) normalize(move_dir, 3);
 
 			rotateY(move_dir, eye_rotation[1]);
 
-			eye_pos[0] += move_dir[0] * .1;
-			eye_pos[2] += move_dir[2] * .1;
-
+			for (int dim = 0; dim < 3; dim++) {
+				eye_pos[dim] += move_dir[dim] * .1;
+			}
+			
 		}
 
 		func(WIDTH, HEIGHT, image_data, image_data_float, frames_still, eye_rotation, eye_pos, rand_seeds);

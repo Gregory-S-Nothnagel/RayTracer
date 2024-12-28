@@ -877,13 +877,10 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 	int num_objects = 3;
 	*/
 
-	Sphere objects[4] = {
-		Sphere(-2, 0, 0, 1, 1, 1, 3, 'B'), // wall
-		Sphere(0, 2, 0, 1, 1, 1, 3, 'B'), // wall
-		Sphere(0, 0, 2, 1, 1, 1, 3, 'B'), // wall
-		Sphere(2, 0, 0, 1, 1, 1, 1, 'S'),
+	Sphere objects[1] = {
+		Sphere(-2, 0, 0, 1, 1, 1, 3, 'B'),
 	};
-	int num_objects = 4;
+	int num_objects = 1;
 
     sycl::buffer<unsigned char, 1> imageBuffer(image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
 	sycl::buffer<float, 1> imageBuffer_float(image_data_float, sycl::range<1>(WIDTH * HEIGHT * 3));
