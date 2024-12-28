@@ -94,21 +94,25 @@ std::ofstream debug_file("debug_output.txt");
 // create materials
 class Material {
 public:
-	float color[3];        // Only used when sphere is emissive
-	float diffuse_color[3];
+	float color[3];				// Only used when sphere is emissive
+	float opt_den[3];			// optical density; Beer-Lambert law (range 0-1)
 	float emissivity;
 	float refr_index;
 	float roughness;
+	float general_optical_density;
+	float diffusion_distance;	// how far a diffused ray travels through this material before exiting
 
 	// Make the constructor constexpr for compile-time evaluation
 	constexpr Material(float color_r, float color_g, float color_b, float emissivity,
-		float diffuse_color_r, float diffuse_color_g, float diffuse_color_b,
-		float roughness, float refr_index)
+		float opt_den_r, float opt_den_g, float opt_den_b,
+		float roughness, float refr_index, float general_optical_density, float diffusion_distance)
 		: color{ color_r, color_g, color_b },
-		diffuse_color{ diffuse_color_r, diffuse_color_g, diffuse_color_b },
+		opt_den{ opt_den_r, opt_den_g, opt_den_b },
 		emissivity(emissivity),
 		refr_index(refr_index),
-		roughness(roughness) {}
+		roughness(roughness),
+		general_optical_density(general_optical_density),
+		diffusion_distance(diffusion_distance) {}
 };
 
 #define GPU_ENABLE
@@ -118,10 +122,12 @@ public:
 class Sphere {
 public:
 	float pos[3];
-	float radius; // sphere
-	float min[3], max[3]; // box
 	int M;
 	char obj_type;
+
+	float radius; // sphere
+
+	float min[3], max[3]; // box
 
 	Sphere(float pos_x, float pos_y, float pos_z, float radius, int mat_index) {
 		this->radius = radius;
@@ -316,7 +322,7 @@ int materialAt(Sphere* sphere_list, int num_objects, float* point, int blacklist
 
 }
 
-void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view_dir, float* view_pos, float factor, float* image_data, uint32_t* rand_seed, int air_mat) {
+void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view_dir, float* view_pos, float* factors, float* image_data, uint32_t* rand_seed, int air_mat) {
 
 	float local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
@@ -332,7 +338,12 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		// get intersection material, normal, distance
 		m2 = getIntersect(sphere_list, num_objects, m1, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
 		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
-		if (intersection_dist <= 0) return;
+		if (intersection_dist <= 0) break;
+
+		// use m1 and intersection dist to apply Beer-Lambert law
+		for (int channel = 0; channel < 3; channel++) {
+			factors[channel] *= exp(-mats[m1].opt_den[channel] * intersection_dist * mats[m1].general_optical_density);
+		}
 
 		// get intersection point of view ray with object so we can do other calculations using it
 		float intersection_point[3];
@@ -348,11 +359,10 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		// if ray inside of non-air material AND hitting its own boundary (ray exiting its own boundary)
 		if (m1 != air_mat && m1 == m2) {
 			m2 = materialAt(sphere_list, num_objects, intersection_point, m1, air_mat);
-			if (m2 == -1) m2 = air_mat;
 		}
 
 		// add emission light
-		for (int channel = 0; channel < 3; channel++) image_data[channel] += mats[m2].emissivity * mats[m2].color[channel] * factor;
+		for (int channel = 0; channel < 3; channel++) image_data[channel] += mats[m2].emissivity * mats[m2].color[channel] * factors[channel];
 
 		// add reflected light
 
@@ -379,6 +389,7 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		float rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
 		float rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
 		float reflection_factor = (.5f * rs * rs + .5f * rp * rp);
+		//reflection_factor = (reflection_factor * (1 - std::max(mats[m1].roughness, mats[m2].roughness))) + (1 * std::max(mats[m1].roughness, mats[m2].roughness));
 
 
 		// next, get a random direction
@@ -410,18 +421,16 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		normalize(view_reflect_dir, 3);
 		normalize(view_transmit_dir, 3);
 
-		// DEBUG
-		if (ray_depth == 0 && false) {
-			image_data[0] = (normal[0] + 1) / 2 * 255;
-			image_data[1] = 0 * (view_transmit_dir[1] + 1) / 2 * 255;
-			image_data[2] = 0 * (view_transmit_dir[2] + 1) / 2 * 255;
-			return;
-		}
-
 		// apply transmission OR reflection
 
 		// remember to specify all variables used as input to findColor() function. define m1 and factor if they change! (factor should change!!!)
-		if (randFloat(rand_seed) < reflection_factor) {
+		if (randFloat(rand_seed) <= reflection_factor) {
+
+			// Beer-Lambert law, applied to diffuse reflection, using m2 optical density and diffusion distance (and roughness)
+			for (int channel = 0; channel < 3; channel++) {
+				factors[channel] *= exp(-mats[m2].opt_den[channel] * mats[m2].diffusion_distance * mats[m2].general_optical_density * mats[m2].roughness);
+			}
+
 			for (int dim = 0; dim < 3; dim++) {
 				local_view_dir[dim] = view_reflect_dir[dim];
 				local_view_pos[dim] = intersection_point[dim];
@@ -435,9 +444,11 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 			}
 		}
 
-		//return;
-
 	}
+
+	// add background emission
+	for (int channel = 0; channel < 3; channel++) image_data[channel] += 100 * factors[channel];
+
 
 }
 
@@ -837,24 +848,25 @@ void findColor(Object* adam, float* view_dir, float* view_pos, float factor, flo
 void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_float, int frames_still, float* eye_rotation, float* eye_pos, uint32_t* rand_seeds) {
 
 	Material mats[4] = {
-		Material(255, 255, 255, 1.0f, // light
-				255, 255, 255, 1.0f,
-				1.5f),
-		Material(255, 255, 255, 0.0f, // wall
-				255, 0, 255, 0.0f,
-				1.33f),
 		Material(255, 255, 255, 0.0f, // air
-				255, 0, 255, 0.5f,
-				1.0f),
-		Material(0, 255, 255, 1.0f, // light2
-				255, 255, 255, 1.0f,
-				1.5f)
+				0, 0, 0, 0.0f,
+				1.0f, 0.0f, .1f),
+		Material(500, 500, 500, 1.0f, // light
+				1, 1, 1, 0.0f,
+				1.5f, 1.0f, .1f),
+		Material(500, 0, 500, 1.0f, // light2
+				.5f, 1, .5f, 0.0f,
+				1.1f, 1.0f, 0.0f),
+		Material(255, 255, 255, 0.0f, // wall
+				1, .9f, 1, 0.0f,
+				1.3f, 1.0f, .1f),
 	};
-
+	int air_mat = 0;
+	
 	Sphere objects[3] = {
-		Sphere(1.3f, 0, 2.0f, .1f, .1f, .1f, 0), // light 1
-		Sphere(1.3f, .3f, 2.0f, .1f, .1f, .1f, 3), // light 2
-		Sphere(1.3f, 0, 0.5f, .2f, 1) // wall
+		Sphere(.5f, 0, 1, .1f, .1f, .1f, 1), // light 1
+		Sphere(.3f, 0, 1, .1f, 2), // purple orb
+		Sphere(.5f, 0, 0, .1f, 3), // green orb
 	};
 	int num_objects = 3;
 
@@ -887,9 +899,9 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 
 			// call raytracing function to get this fragment's color
 			float frag_color[3] = { 0, 0, 0 };
-
+			float factors[3] = { 1, 1, 1 };
 			// object array, num_objects, mats array, view_dir, eye_pos, factor, image_data, rand seeds, air_mat index
-			findColor(sphere_acc.get_pointer(), num_objects, mats_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), 1.0f, frag_color, &(random_acc.get_pointer()[idx]), 2);
+			findColor(sphere_acc.get_pointer(), num_objects, mats_acc.get_pointer(), frag_dir, eye_position_acc.get_pointer(), factors, frag_color, &(random_acc.get_pointer()[idx]), air_mat);
 
 			for (int channel = 0; channel < 3; channel++) {
 				image_float[(h * WIDTH + w) * 3 + channel] *= frames_still / (frames_still + 1.0f);
