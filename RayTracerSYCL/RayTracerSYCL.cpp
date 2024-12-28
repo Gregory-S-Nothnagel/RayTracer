@@ -126,11 +126,9 @@ public:
 class Sphere {
 public:
 	float pos[3];
+	float scale[3];
 	int M;
 	char obj_type;
-	float scale[3] = { 1, 1, 1 };
-
-	float min[3], max[3]; // box
 
 	Sphere(float pos_x, float pos_y, float pos_z, float scale_x, float scale_y, float scale_z, int mat_index, char obj_type) {
 		pos[0] = pos_x;
@@ -141,36 +139,31 @@ public:
 		scale[1] = scale_y;
 		scale[2] = scale_z;
 
-		min[0] = pos[0] - 1; // box size in all dirs assumed 1
-		min[1] = pos[1] - 1;
-		min[2] = pos[2] - 1;
-		max[0] = pos[0] + 1;
-		max[1] = pos[1] + 1;
-		max[2] = pos[2] + 1;
-
 		this->M = mat_index;
 		this->obj_type = obj_type;
 	}
 
+	void pointRealToIdeal(float* real_point, float* ideal_point) {
+		for (int dim = 0; dim < 3; dim++) {
+			ideal_point[dim] = real_point[dim] - pos[dim];
+		}
+	}
+
 	float getDistance(float* view_dir, float* view_pos, bool back_faces) {
 
-		// handle scaling
-		float local_view_dir[3];
-		for (int dim = 0; dim < 3; dim++) {
-			local_view_dir[dim] = view_dir[dim];
-		}
-		normalize(local_view_dir, 3);
+		float local_view_pos[3];
+		pointRealToIdeal(view_pos, local_view_pos);
 
 		if (obj_type == 'S') {
 			// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
 
 			// Geometric solution
-			float L[3] = { pos[0] - view_pos[0], pos[1] - view_pos[1], pos[2] - view_pos[2] };
-			float tca = dot3D(L, local_view_dir);
+			float L[3] = { 0 - local_view_pos[0], 0 - local_view_pos[1], 0 - local_view_pos[2] }; // position assumed zero in "ideal" space
+			float tca = dot3D(L, view_dir);
 			//if (tca < 0) return -1; // bad when you don't want to cull backfaces
 			float d2 = dot3D(L, L) - tca * tca;
 			//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
-			float thc = sqrt(1.0f * 1.0f - d2); // radius assumed 1, affected by scaling in future
+			float thc = sqrt(1.0f * 1.0f - d2); // radius assumed 1 in "ideal" space
 			float t0 = tca - thc;
 			float t1 = tca + thc;
 
@@ -196,13 +189,13 @@ public:
 			// 't' in a variable represents the idea of intersection (tzmin is minimum intersection distance from view_pos to one of the z bounding planes)
 
 			// tmin is really txmin at the start, it just gets repurposed later, so we use its repurposed name from the start
-			float tmin = (min[0] - view_pos[0]) / local_view_dir[0];
-			float tmax = (max[0] - view_pos[0]) / local_view_dir[0];
+			float tmin = (-1 - local_view_pos[0]) / view_dir[0];
+			float tmax = (1 - local_view_pos[0]) / view_dir[0];
 
 			if (tmin > tmax) std::swap(tmin, tmax);
 
-			float tymin = (min[1] - view_pos[1]) / local_view_dir[1];
-			float tymax = (max[1] - view_pos[1]) / local_view_dir[1];
+			float tymin = (-1 - local_view_pos[1]) / view_dir[1];
+			float tymax = (1 - local_view_pos[1]) / view_dir[1];
 
 			if (tymin > tymax) std::swap(tymin, tymax);
 
@@ -211,8 +204,8 @@ public:
 			if (tymin > tmin) tmin = tymin;
 			if (tymax < tmax) tmax = tymax;
 
-			float tzmin = (min[2] - view_pos[2]) / local_view_dir[2];
-			float tzmax = (max[2] - view_pos[2]) / local_view_dir[2];
+			float tzmin = (-1 - local_view_pos[2]) / view_dir[2];
+			float tzmax = (1 - local_view_pos[2]) / view_dir[2];
 
 			if (tzmin > tzmax) std::swap(tzmin, tzmax);
 
@@ -227,30 +220,36 @@ public:
 
 	}
 
-	bool inside(float* point) const {
+	bool inside(float* point) {
+
+		float local_point[3];
+		pointRealToIdeal(point, local_point);
 
 		if (obj_type == 'S') {
-			return power(point[0] - pos[0], 2) + power(point[1] - pos[1], 2) + power(point[2] - pos[2], 2) < 1.0f * 1.0f; // radius assumed 1
+			return power(local_point[0], 2) + power(local_point[1], 2) + power(local_point[2], 2) < 1.0f * 1.0f; // radius assumed 1
 		}
 		else if (obj_type == 'B') {
-			return point[0] > min[0] && point[1] > min[1] && point[2] > min[2] &&
-				point[0] < max[0] && point[1] < max[1] && point[2] < max[2];
+			return local_point[0] > -1 && local_point[1] > -1 && local_point[2] > -1 &&
+				local_point[0] < 1 && local_point[1] < 1 && local_point[2] < 1;
 		}
 
 	}
 
 	void getNormal(float* surface_point, float* normal) {
 
+		float local_surface_point[3];
+		pointRealToIdeal(surface_point, local_surface_point);
+
 		if (obj_type == 'S') {
-			for (int dim = 0; dim < 3; dim++) normal[dim] = surface_point[dim] - pos[dim];
+			for (int dim = 0; dim < 3; dim++) normal[dim] = local_surface_point[dim];
 		}
 		else if (obj_type == 'B') {
 
 			// distance from min and max in each dimension
 			float distances[6];
 			for (int dim = 0; dim < 3; dim++) {
-				distances[dim * 2 + 0] = surface_point[dim] - min[dim];
-				distances[dim * 2 + 1] = max[dim] - surface_point[dim];
+				distances[dim * 2 + 0] = local_surface_point[dim] - (-1);
+				distances[dim * 2 + 1] = 1 - local_surface_point[dim];
 			}
 
 			// finding the side with the closest distance (in its dimension, to the surface point)
@@ -332,13 +331,13 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 	int m1 = materialAt(sphere_list, num_objects, view_pos, -1, air_mat);
 	//int m1 = air_mat;
 
-	for (int ray_depth = 0; ray_depth <= 5; ray_depth++) {
+	for (int ray_depth = 0; ray_depth <= 2; ray_depth++) {
 
 		// initialize values needed for light calculation: m1 and m2, 
-		int m2 = -1;
+		int m2 = -1; // material being hit by ray
 		float normal[3] = { 0, 0, 0 }; // normal at intersection
-		float intersection_point[3];
-		float intersection_dist = -1;
+		float intersection_point[3]; // point in real space, not "ideal" space
+		float intersection_dist = -1; // real distance, not distance in "ideal" space
 
 		// get intersection material, normal, intersection point
 		getIntersect(sphere_list, num_objects, m1, &m2, intersection_point, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
@@ -859,9 +858,9 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 		Material(500, 500, 500, 1.0f, // light
 				1, 1, 1, 0.0f,
 				1.5f, 1.0f, .1f),
-		Material(500, 0, 500, 1.0f, // light2
+		Material(500, 0, 500, 0.0f, // light2
 				.5f, 1, .5f, 0.0f,
-				1.0f, 1000.0f, 1.0f),
+				1.33f, .1f, 1.0f),
 		Material(0, 0, 0, 0.0f, // wall
 				1, .5f, 1, 1.0f,
 				6.0f, 100.0f, .01f),
@@ -877,10 +876,13 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 	int num_objects = 3;
 	*/
 
-	Sphere objects[1] = {
-		Sphere(-2, 0, 0, 1, 1, 1, 3, 'B'),
+	Sphere objects[4] = {
+		Sphere(-2, 0, 0, 1, 1, 1, 3, 'B'), // wall
+		Sphere(0, 2, 0, 1, 1, 1, 3, 'B'), // wall
+		Sphere(0, 0, 2, 1, 1, 1, 3, 'B'), // wall
+		Sphere(2, 0, -2, 1, 1, 1, 2, 'S'),
 	};
-	int num_objects = 1;
+	int num_objects = 4;
 
     sycl::buffer<unsigned char, 1> imageBuffer(image_data, sycl::range<1>(WIDTH * HEIGHT * 3));
 	sycl::buffer<float, 1> imageBuffer_float(image_data_float, sycl::range<1>(WIDTH * HEIGHT * 3));
