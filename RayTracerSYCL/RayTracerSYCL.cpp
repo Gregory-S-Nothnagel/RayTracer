@@ -447,7 +447,7 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 	}
 
 	// add background emission
-	for (int channel = 0; channel < 3; channel++) image_data[channel] += 100 * factors[channel];
+	//for (int channel = 0; channel < 3; channel++) image_data[channel] += 100 * factors[channel];
 
 
 }
@@ -860,10 +860,10 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 				1.5f, 1.0f, .1f),
 		Material(500, 0, 500, 1.0f, // light2
 				.5f, 1, .5f, 0.0f,
-				1.1f, 1.0f, 0.0f),
+				1.0f, 1000.0f, 1.0f),
 		Material(0, 0, 0, 0.0f, // wall
 				1, .5f, 1, 1.0f,
-				1.33f, 1.0f, .1f),
+				6.0f, 1.0f, .5f),
 	};
 	int air_mat = 0;
 	
