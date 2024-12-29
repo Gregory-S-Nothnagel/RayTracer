@@ -341,8 +341,16 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 
 		// get intersection material, normal, intersection point
 		getIntersect(sphere_list, num_objects, m1, &m2, intersection_point, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
+
+		// this must be updated after getIntersect, trust me
+		for (int dim = 0; dim < 3; dim++) {
+			intersection_point[dim] = local_view_pos[dim] + local_view_dir[dim] * intersection_dist;
+		}
+
 		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
-		if (intersection_dist <= 0) break;
+		if (intersection_dist <= 0) {
+			break;
+		}
 
 		// use m1 and intersection dist to apply Beer-Lambert law
 		for (int channel = 0; channel < 3; channel++) {
@@ -375,8 +383,16 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
 		float intersection_eye_vector[3];
 		for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = local_view_pos[dim] - intersection_point[dim];
+		normalize(intersection_eye_vector, 3);
 		float theta_1 = getAngleVectors(normal, intersection_eye_vector);
 		float theta_2 = asin(mats[m1].refr_index * sin(theta_1) / mats[m2].refr_index);
+
+		if (ray_depth == 1 && m1 == 2 && m2 == 0 && false) {
+			image_data[0] = intersection_dist / 4 * 255;
+			image_data[1] = 0;
+			image_data[2] = 0;
+			return;
+		}
 
 		float n1costheta1 = mats[m1].refr_index * cos(theta_1);
 		float n1costheta2 = mats[m1].refr_index * cos(theta_2);
@@ -387,7 +403,6 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 		float rs = (n1costheta1 - n2costheta2) / (n1costheta1 + n2costheta2);
 		float rp = (n1costheta2 - n2costheta1) / (n1costheta2 + n2costheta1);
 		float reflection_factor = (.5f * rs * rs + .5f * rp * rp);
-		//reflection_factor = (reflection_factor * (1 - std::max(mats[m1].roughness, mats[m2].roughness))) + (1 * std::max(mats[m1].roughness, mats[m2].roughness));
 
 
 		// next, get a random direction
@@ -433,6 +448,7 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 				local_view_dir[dim] = view_reflect_dir[dim];
 				local_view_pos[dim] = intersection_point[dim];
 			}
+
 		}
 		else {
 			m1 = m2;
@@ -440,6 +456,7 @@ void findColor(Sphere* sphere_list, int num_objects, Material* mats, float* view
 				local_view_dir[dim] = view_transmit_dir[dim];
 				local_view_pos[dim] = intersection_point[dim];
 			}
+
 		}
 
 	}
@@ -860,7 +877,7 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 				1.5f, 1.0f, .1f),
 		Material(500, 0, 500, 0.0f, // light2
 				.5f, 1, .5f, 0.0f,
-				1.33f, .1f, 1.0f),
+				1.33f, .0f, 1.0f),
 		Material(0, 0, 0, 0.0f, // wall
 				1, .5f, 1, 1.0f,
 				6.0f, 100.0f, .01f),
