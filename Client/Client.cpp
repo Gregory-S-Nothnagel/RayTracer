@@ -2,11 +2,12 @@
 #define NOMINMAX // so that std::min is used instead of the windows.h version
 #include <windows.h> // Includes the core Windows API header file, which provides functions for creating windows, handling events, and drawing on the screen.
 #include <windowsx.h>
-#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <map>
 #include "RayTracerSYCL.h"
+
+constexpr auto PI = 3.14159265358979323846f;
 
 // Global Variables
 std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'D', false}, {VK_SHIFT, false}, {' ', false} }; // which buttons are being pressed
@@ -72,8 +73,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 		int x_pos = GET_X_LPARAM(lParam);
 		int y_pos = GET_Y_LPARAM(lParam);
 
-		eye_rotation[1] = M_PI * (2 * float(x_pos) / WIDTH - 1);
-		eye_rotation[0] = -M_PI * (float(y_pos) / WIDTH - .5f);
+		eye_rotation[1] = PI * (2 * float(x_pos) / WIDTH - 1);
+		eye_rotation[0] = -PI * (float(y_pos) / WIDTH - .5f);
 
 	}
 

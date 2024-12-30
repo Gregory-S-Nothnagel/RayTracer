@@ -60,7 +60,7 @@
       <PreprocessorDefinitions>_DEBUG;DPCPP_DLL_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>C:\Program Files (x86)\Intel\oneAPI\compiler\2025.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <FSYCLUnnamedLambda>Default</FSYCLUnnamedLambda>
     </ClCompile>
     <Link>
       <Link>
@@ -71,7 +71,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <SYCLWarningLevel>Level3</SYCLWarningLevel>
+      <SYCLWarningLevel>EnablesWarningsAndErrors</SYCLWarningLevel>
       <PreprocessorDefinitions>NDEBUG;DPCPP_DLL_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
