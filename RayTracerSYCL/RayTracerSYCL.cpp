@@ -58,18 +58,14 @@ float distance3D(const float* A, const float* B) {
 	float C[3] = { A[0] - B[0], A[1] - B[1], A[2] - B[2] };
 	return vectorLength3D(C);
 }
-float getAngle(const float* A, const float* B, const float* C) { // B is crux of angle
-	float BA[3]; // vector from B to A
-	float BC[3]; // vector from B to C
-	for (int channel = 0; channel < 3; channel++) {
-		BA[channel] = A[channel] - B[channel];
-		BC[channel] = C[channel] - B[channel];
-	}
-	return acos(dot3D(BA, BC) / (vectorLength3D(BA) * vectorLength3D(BC)));
+float getAngleVectors(const float* BA, const float* BC) {
+	float lengthBA = vectorLength3D(BA);
+	float lengthBC = vectorLength3D(BC);
+	float cosTheta = dot3D(BA, BC) / (lengthBA * lengthBC);
+	cosTheta = fmaxf(-1.0f, fminf(1.0f, cosTheta)); // Clamp to [-1, 1]
+	return fabs(acos(cosTheta));
 }
-float getAngleVectors(const float* BA, const float* BC) { // B is crux of angle
-	return acos(dot3D(BA, BC) / (vectorLength3D(BA) * vectorLength3D(BC)));
-}
+
 
 void randDirection(float* dir, uint32_t* rand_seed) {
 
@@ -405,10 +401,10 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 
 		// begin fresnel equations by finding theta_1 and theta_2 (snell's law)
 		float intersection_eye_vector[3];
-		for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = local_view_pos[dim] - intersection_point[dim];
-		normalize(intersection_eye_vector, 3);
+		for (int dim = 0; dim < 3; dim++) intersection_eye_vector[dim] = -local_view_dir[dim]; // already normalized
 		float theta_1 = getAngleVectors(normal, intersection_eye_vector);
-		float theta_2 = asin(mats[m1].refr_index * sin(theta_1) / mats[m2].refr_index);
+		temp = fmaxf(-1.0f, fminf(1.0f, mats[m1].refr_index * sin(theta_1) / mats[m2].refr_index)); // Clamp to [-1, 1]
+		float theta_2 = asin(temp);
 
 		float n1costheta1 = mats[m1].refr_index * cos(theta_1);
 		float n1costheta2 = mats[m1].refr_index * cos(theta_2);
@@ -438,6 +434,13 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 			view_transmit_dir[dim] = (mats[m1].refr_index / mats[m2].refr_index) * (local_view_dir[dim] + c1 * normal[dim]) - normal[dim] * c2;
 		}
 		normalize(view_transmit_dir, 3);
+
+		if (ray_depth == 0 && false) {
+			image_data[0] = (theta_2 / (PI / 2)) * 255;
+			image_data[1] = 0;
+			image_data[2] = 0;
+			return;
+		}
 
 		// apply roughness to transmission and reflection vectors
 		if (m2 == air_mat) {
