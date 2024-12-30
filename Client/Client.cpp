@@ -112,24 +112,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 	// This block is triggered every time the timer fires
 	if (uMsg == WM_TIMER) {
 
-		// change eye position based on key presses and view direction
-		if (key_pressed['W'] || key_pressed['A'] || key_pressed['S'] || key_pressed['D'] || key_pressed[VK_SHIFT] || key_pressed[' ']) {
+		float move_dir[3] = { (float)key_pressed['D'] - (float)key_pressed['A'], (float)key_pressed[VK_SHIFT] - (float)key_pressed[' '], (float)key_pressed['W'] - (float)key_pressed['S'] };
+		// normalize? Hard to do without creating a bug
 
-			float move_dir[3] = { 0, 0, 0 };
-			if (key_pressed['W']) move_dir[2] += 1;
-			if (key_pressed['A']) move_dir[0] -= 1;
-			if (key_pressed['S']) move_dir[2] -= 1;
-			if (key_pressed['D']) move_dir[0] += 1;
-			if (key_pressed[VK_SHIFT]) move_dir[1] += 1;
-			if (key_pressed[' ']) move_dir[1] -= 1;
-			if (!(key_pressed['W'] && key_pressed['S']) && !(key_pressed['A'] && key_pressed['D']) && !(key_pressed[VK_SHIFT] && key_pressed[' '])) normalize(move_dir, 3);
+		rotateY(move_dir, eye_rotation[1]);
 
-			rotateY(move_dir, eye_rotation[1]);
-
-			for (int dim = 0; dim < 3; dim++) {
-				eye_pos[dim] += move_dir[dim] * .1;
-			}
-			
+		for (int dim = 0; dim < 3; dim++) {
+			eye_pos[dim] += move_dir[dim] * .1f;
 		}
 
 		func(WIDTH, HEIGHT, image_data, image_data_float, frames_still, eye_rotation, eye_pos, rand_seeds);
