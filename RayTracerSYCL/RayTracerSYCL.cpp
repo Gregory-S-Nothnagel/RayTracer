@@ -138,30 +138,55 @@ public:
 
 	void pointRealToIdeal(float* real_point, float* ideal_point) {
 		for (int dim = 0; dim < 3; dim++) {
-			ideal_point[dim] = real_point[dim] - pos[dim];
+			ideal_point[dim] = (real_point[dim] - pos[dim]) / scale[dim];
+		}
+	}
+
+	void pointIdealToReal(float* ideal_point, float* real_point) {
+		for (int dim = 0; dim < 3; dim++) {
+			real_point[dim] = ideal_point[dim] * scale[dim] + pos[dim];
+		}
+	}
+
+	void vectorRealToIdeal(float* real_vector, float* ideal_vector) {
+		for (int dim = 0; dim < 3; dim++) {
+			ideal_vector[dim] = real_vector[dim] / scale[dim];
+		}
+	}
+
+	void vectorIdealToReal(float* ideal_vector, float* real_vector) {
+		for (int dim = 0; dim < 3; dim++) {
+			real_vector[dim] = ideal_vector[dim] * scale[dim];
 		}
 	}
 
 	float getDistance(float* view_dir, float* view_pos, bool back_faces) {
 
 		float local_view_pos[3];
+		float local_view_dir[3]; // not normalized
+		float local_view_dir_normalized[3];
 		pointRealToIdeal(view_pos, local_view_pos);
+		vectorRealToIdeal(view_dir, local_view_dir);
+		vectorRealToIdeal(view_dir, local_view_dir_normalized);
+		normalize(local_view_dir_normalized, 3);
+
+		float dist = -1.0f;
 
 		if (obj_type == 'S') {
 			// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html is the solution we use. Fastest
 
 			// Geometric solution
 			float L[3] = { 0 - local_view_pos[0], 0 - local_view_pos[1], 0 - local_view_pos[2] }; // position assumed zero in "ideal" space
-			float tca = dot3D(L, view_dir);
-			//if (tca < 0) return -1; // bad when you don't want to cull backfaces
+			float tca = dot3D(L, local_view_dir_normalized);
+			//if (tca < 0) dist = -1; // bad when you don't want to cull backfaces
 			float d2 = dot3D(L, L) - tca * tca;
-			//if (d2 > radius * radius) return -1; // slows down this function significantly, found this out from perf profiler
+			//if (d2 > radius * radius) dist = -1; // slows down this function significantly, found this out from perf profiler
 			float thc = sqrt(1.0f * 1.0f - d2); // radius assumed 1 in "ideal" space
 			float t0 = tca - thc;
 			float t1 = tca + thc;
 
 			if (back_faces) {
-				return std::max(t0, t1);
+				dist = std::max(t0, t1);
 			}
 			else {
 				if (t0 > t1) std::swap(t0, t1);
@@ -172,7 +197,7 @@ public:
 						return -1; // Both t0 and t1 are negative.
 				}
 
-				return t0;
+				dist = t0;
 			}
 		}
 		else if (obj_type == 'B') {
@@ -182,13 +207,13 @@ public:
 			// 't' in a variable represents the idea of intersection (tzmin is minimum intersection distance from view_pos to one of the z bounding planes)
 
 			// tmin is really txmin at the start, it just gets repurposed later, so we use its repurposed name from the start
-			float tmin = (-1 - local_view_pos[0]) / view_dir[0];
-			float tmax = (1 - local_view_pos[0]) / view_dir[0];
+			float tmin = (-1 - local_view_pos[0]) / local_view_dir_normalized[0];
+			float tmax = (1 - local_view_pos[0]) / local_view_dir_normalized[0];
 
 			if (tmin > tmax) std::swap(tmin, tmax);
 
-			float tymin = (-1 - local_view_pos[1]) / view_dir[1];
-			float tymax = (1 - local_view_pos[1]) / view_dir[1];
+			float tymin = (-1 - local_view_pos[1]) / local_view_dir_normalized[1];
+			float tymax = (1 - local_view_pos[1]) / local_view_dir_normalized[1];
 
 			if (tymin > tymax) std::swap(tymin, tymax);
 
@@ -197,8 +222,8 @@ public:
 			if (tymin > tmin) tmin = tymin;
 			if (tymax < tmax) tmax = tymax;
 
-			float tzmin = (-1 - local_view_pos[2]) / view_dir[2];
-			float tzmax = (1 - local_view_pos[2]) / view_dir[2];
+			float tzmin = (-1 - local_view_pos[2]) / local_view_dir_normalized[2];
+			float tzmax = (1 - local_view_pos[2]) / local_view_dir_normalized[2];
 
 			if (tzmin > tzmax) std::swap(tzmin, tzmax);
 
@@ -207,12 +232,11 @@ public:
 			if (tzmin > tmin) tmin = tzmin;
 			if (tzmax < tmax) tmax = tzmax;
 
-			return std::min(tmin, tmax);
+			dist = std::min(tmin, tmax);
 
 		}
 
-		// we should never reach this point
-		return -1;
+		return dist * vectorLength3D(view_dir) / vectorLength3D(local_view_dir);
 
 	}
 
@@ -270,6 +294,7 @@ public:
 
 		}
 
+		vectorIdealToReal(normal, normal);
 		normalize(normal, 3);
 
 	}
@@ -329,15 +354,13 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
 	int m1 = materialAt(object_list, num_objects, view_pos, -1, air_mat);
 
-	for (int ray_depth = 0; ray_depth <= 2; ray_depth++) {
+	for (int ray_depth = 0; ray_depth <= 1; ray_depth++) {
 
 		// initialize values needed for light calculation: m1 and m2, 
 		int m2 = -1; // material being hit by ray
 		float normal[3] = { 0, 0, 0 }; // normal at intersection
 		float intersection_point[3]; // point in real space, not "ideal" space
 		float intersection_dist = -1; // real distance, not distance in "ideal" space
-
-		
 
 		// get intersection material, normal, intersection point
 		getIntersect(object_list, num_objects, m1, &m2, intersection_point, &intersection_dist, normal, local_view_dir, local_view_pos, image_data);
@@ -889,9 +912,9 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 
 	Object objects[4] = {
 		Object(-2, 0, 0, 1, 1, 1, 3, 'B'), // wall
-		Object(0, 2, 0, 1, 1, 1, 3, 'B'), // wall
+		Object(0, 2, 0, 1, 1, 1, 1, 'B'), // wall
 		Object(0, 0, 2, 1, 1, 1, 3, 'B'), // wall
-		Object(2, 0, -2, 1, 1, 1, 2, 'S'),
+		Object(0, 0, 0, 1, 1, 1, 2, 'S'),
 	};
 	int num_objects = 4;
 
