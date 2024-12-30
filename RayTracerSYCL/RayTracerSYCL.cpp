@@ -254,7 +254,7 @@ public:
 
 	}
 
-	void getNormal(float* surface_point, float* normal) {
+	void getNormal(float* surface_point, float* normal) { // !! something wrong here (idk what)
 
 		float local_surface_point[3];
 		pointRealToIdeal(surface_point, local_surface_point);
@@ -290,7 +290,9 @@ public:
 
 		}
 
-		vectorIdealToReal(normal, normal);
+		for (int dim = 0; dim < 3; dim++) normal[dim] /= scale[dim];
+
+		//vectorIdealToReal(normal, normal); // doesn't work for normals. Think about it
 		normalize(normal, 3);
 
 	}
@@ -349,8 +351,9 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 	float local_view_dir[3] = { view_dir[0], view_dir[1], view_dir[2] };
 	float local_view_pos[3] = { view_pos[0], view_pos[1], view_pos[2] };
 	int m1 = materialAt(object_list, num_objects, view_pos, -1, air_mat);
+	int reflection_counter = 0;
 
-	for (int ray_depth = 0; ray_depth <= 1; ray_depth++) {
+	for (int ray_depth = 0; ray_depth <= 2; ray_depth++) {
 
 		// initialize values needed for light calculation: m1 and m2, 
 		int m2 = -1; // material being hit by ray
@@ -364,6 +367,13 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 		// this must be updated after getIntersect, trust me
 		for (int dim = 0; dim < 3; dim++) {
 			intersection_point[dim] = local_view_pos[dim] + local_view_dir[dim] * intersection_dist;
+		}
+
+		if (ray_depth == 0 && intersection_dist > 0 && false) {
+			image_data[0] = intersection_dist * 255;
+			image_data[1] = 0;
+			image_data[2] = 0;
+			return;
 		}
 
 		// if intersection point not found, return early so that no additional color is added (ie. background color is black)
@@ -435,13 +445,6 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 		}
 		normalize(view_transmit_dir, 3);
 
-		if (ray_depth == 0 && false) {
-			image_data[0] = (theta_2 / (PI / 2)) * 255;
-			image_data[1] = 0;
-			image_data[2] = 0;
-			return;
-		}
-
 		// apply roughness to transmission and reflection vectors
 		if (m2 == air_mat) {
 			for (int dim = 0; dim < 3; dim++) view_reflect_dir[dim] = mats[m1].roughness * rand_dir[dim] + (1 - mats[m1].roughness) * view_reflect_dir[dim];
@@ -457,8 +460,8 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 		// apply transmission OR reflection
 
 		// remember to specify all variables used as input to findColor() function. define m1 and factor if they change! (factor should change!!!)
-		if (randFloat(rand_seed) <= reflection_factor) {
-
+		if (randFloat(rand_seed) <= reflection_factor || isnan(c2)) {
+			reflection_counter++;
 			// Beer-Lambert law, applied to diffuse reflection, using m2 optical density and diffusion distance (and roughness)
 			for (int channel = 0; channel < 3; channel++) {
 				factors[channel] *= exp(-mats[m2].opt_den[channel] * mats[m2].diffusion_distance * mats[m2].general_optical_density * mats[m2].roughness);
@@ -485,7 +488,6 @@ void findColor(Object* object_list, int num_objects, Material* mats, float* view
 	if (m1 == air_mat){
 		for (int channel = 0; channel < 3; channel++) image_data[channel] += 100 * factors[channel];
 	}
-
 
 }
 
@@ -905,19 +907,20 @@ void func(int WIDTH, int HEIGHT, unsigned char* image_data, float* image_data_fl
 	int air_mat = 0;
 	
 	/*
-	Object objects[3] = {
-		Object(.5f, 0, .5f, .1f, .1f, .1f, 1), // light 1
-		Object(.2f, 0, .5f, .1f, 2), // purple orb
-		Object(.5f, 0, .2f, .1f, 3), // green orb
+	Object objects[4] = {
+		Object(-2, 0, 0, 1, 1, 1, 3, 'B'), // wall
+		Object(0, 2, 0, 1, 1, 1, 1, 'B'), // wall
+		Object(0, 0, 2, 1, 1, 1, 3, 'B'), // wall
+		Object(0.5f, 0, 0, 1.5f, 1, 1, 2, 'S'),
 	};
-	int num_objects = 3;
+	int num_objects = 4;
 	*/
 
 	Object objects[4] = {
 		Object(-2, 0, 0, 1, 1, 1, 3, 'B'), // wall
 		Object(0, 2, 0, 1, 1, 1, 1, 'B'), // wall
 		Object(0, 0, 2, 1, 1, 1, 3, 'B'), // wall
-		Object(0, 0, 0, 1, 1, 1, 2, 'S'),
+		Object(0.5f, 0, 0, 1.5f, 1, 1, 2, 'S'),
 	};
 	int num_objects = 4;
 
