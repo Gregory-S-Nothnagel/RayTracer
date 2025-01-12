@@ -10,7 +10,7 @@
 constexpr auto PI = 3.14159265358979323846f;
 
 // Global Variables
-std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'D', false}, {VK_SHIFT, false}, {' ', false} }; // which buttons are being pressed
+std::map<int, bool> key_pressed = { {'W', false}, {'A', false}, {'S', false}, {'D', false}, {VK_SHIFT, false}, {' ', false}, {'L', false} }; // which buttons are being pressed
 int frames_still = 0;
 float eye_pos[3] = { 0, 0, 0 };
 float eye_rotation[2] = { 0, 0 }; // x and y, radians (default view direction is (0, 0, 1))
@@ -61,11 +61,16 @@ void rotateY(float* v, float angle) { // angle in radians
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
 	// key press events
-	if (uMsg == WM_KEYDOWN) key_pressed[wParam] = true;
+	if (uMsg == WM_KEYDOWN) {
+		key_pressed[wParam] = true;
+		if (key_pressed['L']) PlaySound(TEXT("test.wav"), NULL, SND_ASYNC);
+	}
 	if (uMsg == WM_KEYUP) key_pressed[wParam] = false;
 
 	// mouse move events
 	if (uMsg == WM_MOUSEMOVE) {
+
+		//PlaySound(TEXT("test.wav"), NULL, SND_FILENAME);
 
 		frames_still = 0;
 
@@ -109,7 +114,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 		return 0;
 	}
 
-	// This block is triggered every time the timer fires
+	// This block is triggered every time the timer fires (which also triggers a frame redraw)
 	if (uMsg == WM_TIMER) {
 
 		float move_dir[3] = { (float)key_pressed['D'] - (float)key_pressed['A'], (float)key_pressed[VK_SHIFT] - (float)key_pressed[' '], (float)key_pressed['W'] - (float)key_pressed['S'] };
