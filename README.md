@@ -1,10 +1,8 @@
-Tutorial:
-https://learn.microsoft.com/en-us/cpp/build/walkthrough-creating-and-using-a-dynamic-link-library-cpp?view=msvc-170
+standalone intel DPC++ compiler - https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler-download.html
+oneAPI DLL Tutorial - https://learn.microsoft.com/en-us/cpp/build/walkthrough-creating-and-using-a-dynamic-link-library-cpp?view=msvc-170
 
-get standalone intel DPC++ compiler at
-	https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler-download.html
-
-installer should offer you the option to integrate the installation into VisualStudio2022, check that box to choose that option. This will ensure that "intel DPC++ compiler 2025" appears as a possible platform toolset in the DLL project's Project Properties.
+installer should offer you the option to integrate the installation into VisualStudio2022, check that box to choose that option.
+	This will ensure that "intel DPC++ compiler 2025" appears as a possible platform toolset in the DLL project's Project Properties.
 
 1. create a DLL C++ project from the VS templates
 	DLL .h file format:
@@ -15,9 +13,8 @@ installer should offer you the option to integrate the installation into VisualS
 
 2.
 	DLL .cpp file (NOT dllmain.cpp, a new file) format:
-	#include "pch.h" // use stdafx.h in Visual Studio 2017 and earlier
+	#include "pch.h" // or whatever your header file is named
 	// ... other includes as needed
-	#include "MathLibrary.h"
 
 	// global variables allowed
 
@@ -31,7 +28,7 @@ installer should offer you the option to integrate the installation into VisualS
 
 4. create a console application project (preferably in the same solution as the DLL project, so they share a solution and .sln file)
 	Client: add additional library directories using $(IntDir), additional include directories, additional dependencies
-	*additional dependencies are not the whole path, just the file (ie. "libname.lib" (no quotes though))
+	*additional dependencies are not the whole path, just the file: libname.lib
 
 	".dll is not a valid win32 application" or something -> set client as startup project in solution explorer
 	".lib cannot be found" -> 
@@ -55,9 +52,6 @@ Had to edit PATH variable on computer in advanced system settings to include the
 
 
 SYCL can't handle recursion or non-const global variables. It can when that stuff is run on host and not GPU, but GPU can't handle those things. The more you know...
-
-
-constant initialized means using constexpr I think...
 
 Git -> reset -> delete changes to bring your local project back to the most recent commit.
 
