@@ -10,14 +10,8 @@ installer should offer you the option to integrate the installation into VisualS
 	DLL .h file format:
 	
 	#pragma once
-	
-	#ifdef MathLibrary_EXPORTS
-	#define MathLibrary_API __declspec(dllexport)
-	#else
-	#define MathLibrary_API __declspec(dllimport)
-	#endif
 
-	extern "C" MathLibrary_API void func(); // "C", as well as MathLibrary_API, are both necessary. idk why
+	extern "C" __declspec(dllexport) void func(...);
 
 2.
 	DLL .cpp file (NOT dllmain.cpp, a new file) format:
