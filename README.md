@@ -53,6 +53,4 @@ Had to edit PATH variable on computer in advanced system settings to include the
 
 SYCL can't handle recursion or non-const global variables. It can when that stuff is run on host and not GPU, but GPU can't handle those things. The more you know...
 
-Git -> reset -> delete changes to bring your local project back to the most recent commit.
-
 SYCL kernel DOES NOT work with doubles. Any time you use 2.0 in a calculation, it must be written 2.0f, which evaluates to a float. If you just write 2.0, it evaluates to a double and the kernel just explodes and lags out. What the fuck man.
