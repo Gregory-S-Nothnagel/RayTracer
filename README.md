@@ -1,8 +1,10 @@
 Tutorial:
 https://learn.microsoft.com/en-us/cpp/build/walkthrough-creating-and-using-a-dynamic-link-library-cpp?view=msvc-170
 
+get standalone intel DPC++ compiler at
+	https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler-download.html
 
-Notes/breakdown:
+installer should offer you the option to integrate the installation into VisualStudio2022, check that box to choose that option. This will ensure that "intel DPC++ compiler 2025" appears as a possible platform toolset in the DLL project's Project Properties.
 
 1. create a DLL C++ project from the VS templates
 	DLL .h file format:
