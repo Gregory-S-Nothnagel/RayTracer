@@ -50,7 +50,10 @@ PS: just to be sure, always REbuild the dll project, then build the client proje
 
 LNK1104	cannot open DLL project's .lib file -> Client program properties VC++ directories must include the lib directory for the lib file that the DLL project produces (in "Library Directories" of course)
 
-Had to edit PATH variable on computer in advanced system settings to include the path to the SYCL windows compiler binary, which has all the sycl dlls (C:\Program Files (x86)\Intel\oneAPI\compiler\2025.0\bin)
+Had to edit PATH variable on computer in advanced system settings to include the path to the SYCL windows compiler binary, which has all the sycl dlls
+	System Properties -> Environment Variables -> User variables for _username_
+ 	add this path:
+  		C:\Program Files (x86)\Intel\oneAPI\compiler\2025.0\bin
 
 
 
